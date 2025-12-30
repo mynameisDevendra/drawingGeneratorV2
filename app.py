@@ -14,24 +14,43 @@ PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 120 
 
 def parse_fixed_format_with_cable(text):
-    """Parses pattern: A, Function [1 to 5], Cable Detail."""
+    """
+    Improved Parser: Correctly separates Function and Cable Detail.
+    Expected: Row ID, Function [Start to End], Cable Detail
+    """
     new_rows = []
     try:
-        parts = [p.strip() for p in text.split(',')]
-        if len(parts) < 2: return None
-        row_id_match = re.search(r'^([A-Z]|\d+)', parts[0], re.I)
-        if not row_id_match: return None
-        rid = row_id_match.group(1).upper()
-        cable_detail = parts[-1].strip().upper() if len(parts) >= 3 else ""
-        group = parts[1]
-        match = re.search(r'([^\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]', group, re.I)
+        # Step 1: Extract Row ID (Everything before the first comma)
+        first_comma = text.find(',')
+        if first_comma == -1: return None
+        rid = text[:first_comma].strip().upper()
+        
+        # Step 2: Extract Cable Detail (Everything after the last comma)
+        last_comma = text.rfind(',')
+        if last_comma == first_comma:
+            cable_detail = ""
+            middle_part = text[first_comma+1:].strip()
+        else:
+            cable_detail = text[last_comma+1:].strip().upper()
+            middle_part = text[first_comma+1:last_comma].strip()
+        
+        # Step 3: Parse Function and Terminal Range
+        match = re.search(r'([^\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]', middle_part, re.I)
         if match:
             func_text = match.group(1).strip().upper() 
-            start, end = int(match.group(2)), int(match.group(3))
+            start = int(match.group(2))
+            end = int(match.group(3))
+            
             for i in range(start, end + 1):
-                new_rows.append({"Row ID": rid, "Function": func_text, "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)})
+                new_rows.append({
+                    "Row ID": rid, 
+                    "Function": func_text, 
+                    "Cable Detail": cable_detail, 
+                    "Terminal Number": str(i).zfill(2)
+                })
         return new_rows
-    except: return None
+    except Exception as e:
+        return None
 
 def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num):
     """Draws peripheral boundary and 9-compartment title block."""
@@ -41,7 +60,7 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     c.line(PAGE_MARGIN, footer_y, width - PAGE_MARGIN, footer_y)
     
     total_footer_w = width - (2 * PAGE_MARGIN)
-    info_x_width = total_footer_w / 15  # Slightly adjusted for more boxes
+    info_x_width = total_footer_w / 15  
     info_x = PAGE_MARGIN + info_x_width
     
     c.line(info_x, PAGE_MARGIN, info_x, height - PAGE_MARGIN)
@@ -83,13 +102,16 @@ def process_drawing(df, fs, footer_values, left_col):
     df = df.dropna(subset=['Terminal Number']).drop_duplicates(subset=['Row ID', 'Terminal Number'])
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
+    
     info_x_width = (width - (2 * PAGE_MARGIN)) / 15
     info_x = PAGE_MARGIN + info_x_width
     max_draw_w = width - info_x - SAFETY_OFFSET - 40
     terminals_per_row = int(max_draw_w // FIXED_GAP)
+    
     sheet_count = 1
     y_curr = height - 160 
     draw_page_template(c, width, height, footer_values, left_col, sheet_count)
+    
     rows = df.groupby('Row ID')
     for rid, group in rows:
         terms = group.to_dict('records')
@@ -134,7 +156,7 @@ if 'df' not in st.session_state:
 
 with st.sidebar:
     st.header("Project Details")
-    with st.expander("📂 Footer Settings", expanded=True):
+    with st.expander("📂 Footer Settings", expanded=False):
         f_prep = st.text_input("Prepared by", "NOVALINE")
         f_chk1 = st.text_input("Checked by (1)", "SSE/SIG")
         f_chk2 = st.text_input("Checked by (2)", "ASTE/SIG")
@@ -144,7 +166,8 @@ with st.sidebar:
         f_station = st.text_input("Station", "BAITARANI ROAD")
         f_sip = st.text_input("SIP Number", "SIP/BTRD/2025")
         f_vals = [f_prep, f_chk1, f_chk2, f_appr, f_lb_no, f_goomty, f_station, f_sip, "AUTO"]
-    fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
+    with st.expander("📏 Font Sizes", expanded=False):
+        fs = {'head': st.number_input("Function Font", 8.0), 'foot': st.number_input("Cable Detail Font", 7.0), 'term': st.number_input("Terminal Number Font", 7.0), 'row': st.number_input("Row ID Font", 12.0)}
     l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
 
 st.subheader("Data Entry")
@@ -163,7 +186,6 @@ st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", us
 if st.button("🚀 Generate PDF Drawing"):
     if not st.session_state.df.empty:
         pdf = process_drawing(st.session_state.df, fs, f_vals, l_col)
-        # Generate Dynamic Filename
         date_str = datetime.now().strftime("%d-%m-%Y")
         file_name = f"{f_lb_no}_{f_goomty}_{f_station}_{date_str}.pdf".replace(" ", "_")
         st.download_button("⬇️ Download PDF Drawing", data=pdf, file_name=file_name)
