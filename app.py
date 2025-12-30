@@ -14,7 +14,7 @@ PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 120 
 
 def parse_fixed_format_multi_function(text):
-    """Parses pattern: Row ID, Func1 [1 to 4], Func2 [5 to 8], Cable Detail."""
+    """Parses Row ID, Functions [Range], Cable Detail. Supports multiple lines for same Row ID."""
     new_rows = []
     try:
         first_comma = text.find(',')
@@ -83,11 +83,12 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     return info_x
 
 def process_drawing(df, fs, footer_values, left_col):
-    """Corrected Drawing Logic: Function and Cable Detail brackets are independent."""
+    """Processes A3 drawing with support for multiple cables per Row ID."""
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
     
+    # Ensure numerical sorting of terminal numbers within the same Row ID
     df = df.dropna(subset=['Terminal Number']).drop_duplicates(subset=['Row ID', 'Terminal Number'])
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
@@ -116,56 +117,45 @@ def process_drawing(df, fs, footer_values, left_col):
             c.setFont("Helvetica-Bold", fs['row'])
             c.drawRightString(x_start - 30, y_curr + 15, str(rid).upper())
             
-            # 1. Draw Terminals
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * FIXED_GAP)
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                 c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
-            # 2. Draw Brackets (Independent Logic for Function vs Cable Detail)
-            # y_off: Top Header (53.5), Bottom Footer (-13.5)
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
                     txt = str(chunk[i][key]).upper()
-                    if not txt: # Skip empty brackets
+                    if not txt:
                         i += 1
                         continue
-                    
                     s_idx = i
-                    # Find how far this specific text spans
                     while i < len(chunk) and str(chunk[i][key]).upper() == txt:
                         i += 1
                     e_idx = i - 1
-                    
                     s_x = x_start + (s_idx * FIXED_GAP)
                     e_x = x_start + (e_idx * FIXED_GAP)
-                    
-                    c.setLineWidth(0.8)
-                    c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off)
+                    c.setLineWidth(0.8); c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off)
                     mid = (s_x+e_x)/2
                     c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
-                    
                     if is_h:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off-5)
                         c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off-5)
-                        c.line(mid, y_curr+y_off, mid, y_curr+y_off+5)
-                        c.drawCentredString(mid, y_curr+y_off+10, txt)
+                        c.line(mid, y_curr+y_off, mid, y_curr+y_off+5); c.drawCentredString(mid, y_curr+y_off+10, txt)
                     else:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5)
                         c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
-                        c.line(mid, y_curr+y_off, mid, y_curr+y_off-5)
-                        c.drawCentredString(mid, y_curr+y_off-15, txt)
+                        c.line(mid, y_curr+y_off, mid, y_curr+y_off-5); c.drawCentredString(mid, y_curr+y_off-15, txt)
             y_curr -= ROW_HEIGHT_SPACING 
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
-st.title("🚉 CTR Particular Generator (Bracket Fix)")
+st.title("🚉 CTR Particular Generator")
 
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "DID HHG", "Cable Detail": "101-30C", "Terminal Number": "01"}])
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "DID HHG", "Cable Detail": "CABLE 1", "Terminal Number": "01"}])
 
 with st.sidebar:
     st.header("Project Details")
@@ -175,7 +165,8 @@ with st.sidebar:
         fs = {'head': st.number_input("Function Font", 8.0), 'foot': st.number_input("Cable Detail Font", 7.0), 'term': st.number_input("Terminal Number Font", 7.0), 'row': st.number_input("Row ID Font", 12.0)}
     l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
 
-st.subheader("Data Entry")
+st.subheader("Multi-Cable TXT Entry")
+st.info("To add multiple cables to one row, use the same Row ID on separate lines.")
 uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
 if uploaded_file:
     stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
