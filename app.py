@@ -140,31 +140,40 @@ def process_drawing(df, fs, footer_values, left_col):
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
+# --- SIDEBAR: PROTOCOL & SETTINGS ---
 with st.sidebar:
+    st.header("📖 TXT Format Protocol")
+    st.markdown("""
+    **To show separate cable brackets on the same row, follow this rule:**
+    1. **One Line Per Cable**: Each line in your `.txt` file represents one cable.
+    2. **Same Row ID**: Keep the Row ID same to stack horizontally.
+    3. **Example**:
+    ```text
+    A, DID HHG [1 to 5], CABLE-01
+    A, SPARES [6 to 10], CABLE-02
+    ```
+    """)
+    st.divider()
     st.header("Project Details")
     with st.expander("📂 Footer Settings", expanded=False):
-        f_vals = [st.text_input("Prepared by", "NOVALINE"), st.text_input("Checked by (1)", "SSE/SIG"), st.text_input("Checked by (2)", "ASTE/SIG"), st.text_input("Approved by", "DY.CSTE"), st.text_input("LB/CTR/RR No.", "CTR-01"), st.text_input("RR/Goomty No.", "G-05"), st.text_input("Station", "BAITARANI ROAD"), st.text_input("SIP Number", "SIP/BTRD/2025"), "AUTO"]
+        f_vals = [
+            st.text_input("Prepared by", "NOVALINE"), 
+            st.text_input("Checked by (1)", "SSE/SIG"), 
+            st.text_input("Checked by (2)", "ASTE/SIG"), 
+            st.text_input("Approved by", "DY.CSTE"), 
+            st.text_input("LB/CTR/RR No.", "CTR-01"), 
+            st.text_input("RR/Goomty No.", "G-05"), 
+            st.text_input("Station", "BAITARANI ROAD"), 
+            st.text_input("SIP Number", "SIP/BTRD/2025"), 
+            "AUTO"
+        ]
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
     l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
 
-# PERMANENT INSTRUCTIONS
-with st.expander("📖 TXT Format & Cable Protocol", expanded=True):
-    st.markdown("""
-    ### Important: Cable-Wise Data Entry Protocol
-    To show separate cable brackets on the same row, your `.txt` file must be structured cable-wise:
-    1. **Format**: `Row ID, Function [Start to End], Cable Detail`
-    2. **Protocol**: Each unique cable MUST have its own line.
-    3. **Vertical Stacking**: Use the same Row ID to keep terminals on the same horizontal line.
-    
-    **Example for Row A with two cables:**
-    ```text
-    A, DID HHG [1 to 10], 101-30C TO LOC-89
-    A, DID DG [11 to 20], 102-12C TO LOC-90
-    ```
-    """)
-
+# --- MAIN INTERFACE ---
 st.subheader("Data Upload")
-uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
+uploaded_file = st.file_uploader("Upload .txt file (Follow sidebar protocol)", type=["txt"])
+
 if uploaded_file:
     stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
     all_parsed = []
