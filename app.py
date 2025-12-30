@@ -14,18 +14,13 @@ PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 120 
 
 def parse_fixed_format_multi_function(text):
-    """
-    Advanced Parser: Supports multiple functions per Row.
-    Format: Row ID, Func1 [1 to 4], Func2 [5 to 8], Cable Detail
-    """
+    """Parses pattern: Row ID, Func1 [1 to 4], Func2 [5 to 8], Cable Detail."""
     new_rows = []
     try:
-        # 1. Isolate Row ID (Everything before first comma)
         first_comma = text.find(',')
         if first_comma == -1: return None
         rid = text[:first_comma].strip().upper()
         
-        # 2. Isolate Cable Detail (Everything after last comma)
         last_comma = text.rfind(',')
         if last_comma <= first_comma:
             cable_detail = ""
@@ -34,26 +29,19 @@ def parse_fixed_format_multi_function(text):
             cable_detail = text[last_comma+1:].strip().upper()
             middle_part = text[first_comma+1:last_comma].strip()
         
-        # 3. Find ALL Function [Range] patterns in the middle section
-        # Regex finds all occurrences of: Text [Number to Number]
         pattern = r'([^,\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]'
         matches = re.findall(pattern, middle_part, re.I)
         
         for match in matches:
             func_text = match[0].strip().upper()
-            start = int(match[1])
-            end = int(match[2])
-            
+            start, end = int(match[1]), int(match[2])
             for i in range(start, end + 1):
                 new_rows.append({
-                    "Row ID": rid, 
-                    "Function": func_text, 
-                    "Cable Detail": cable_detail, 
-                    "Terminal Number": str(i).zfill(2)
+                    "Row ID": rid, "Function": func_text, 
+                    "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)
                 })
         return new_rows
-    except Exception:
-        return None
+    except Exception: return None
 
 def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num):
     """Draws peripheral boundary and 9-compartment title block."""
@@ -72,9 +60,7 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     remaining_w = total_footer_w - info_x_width
     box_w = remaining_w / 8
     dividers = [info_x + (i * box_w) for i in range(9)] 
-    
-    for x in dividers[:-1]: 
-        c.line(x, PAGE_MARGIN, x, footer_y)
+    for x in dividers[:-1]: c.line(x, PAGE_MARGIN, x, footer_y)
 
     c.setFont("Helvetica-Bold", 6)
     c.drawString(PAGE_MARGIN + 3, height - PAGE_MARGIN - 20, left_col_data['line1'].upper())
@@ -83,7 +69,6 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     c.drawString(PAGE_MARGIN + 3, height - PAGE_MARGIN - 50, left_col_data['line3'].upper())
 
     headers = ["PREPARED BY", "CHECKED BY", "CHECKED BY", "APPROVED BY", "LB/CTR/RR NO.", "RR/GOOMTY NO.", "STATION", "SIP", "SHEET NO."]
-    
     for i in range(9):
         x_start = PAGE_MARGIN if i == 0 else dividers[i-1]
         x_end = dividers[i]
@@ -98,10 +83,11 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     return info_x
 
 def process_drawing(df, fs, footer_values, left_col):
-    """Processes A3 drawing with vertical stacking."""
+    """Corrected Drawing Logic: Function and Cable Detail brackets are independent."""
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
+    
     df = df.dropna(subset=['Terminal Number']).drop_duplicates(subset=['Row ID', 'Terminal Number'])
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
@@ -119,40 +105,64 @@ def process_drawing(df, fs, footer_values, left_col):
     for rid, group in rows:
         terms = group.to_dict('records')
         chunks = [terms[i:i + terminals_per_row] for i in range(0, len(terms), terminals_per_row)]
+        
         for chunk in chunks:
             if y_curr < 200: 
                 c.showPage(); sheet_count += 1
                 draw_page_template(c, width, height, footer_values, left_col, sheet_count)
                 y_curr = height - 160
+            
             x_start = info_x + SAFETY_OFFSET + 20
             c.setFont("Helvetica-Bold", fs['row'])
             c.drawRightString(x_start - 30, y_curr + 15, str(rid).upper())
+            
+            # 1. Draw Terminals
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * FIXED_GAP)
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                 c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
+            
+            # 2. Draw Brackets (Independent Logic for Function vs Cable Detail)
+            # y_off: Top Header (53.5), Bottom Footer (-13.5)
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
-                    txt, s_x, j = str(chunk[i][key]).upper(), x_start + (i * FIXED_GAP), i
-                    while j < len(chunk) and str(chunk[j][key]).upper() == txt:
-                        e_x, j = x_start + (j * gap if 'gap' in locals() else FIXED_GAP), j + 1
-                    c.setLineWidth(0.8); c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off); mid = (s_x+e_x)/2
+                    txt = str(chunk[i][key]).upper()
+                    if not txt: # Skip empty brackets
+                        i += 1
+                        continue
+                    
+                    s_idx = i
+                    # Find how far this specific text spans
+                    while i < len(chunk) and str(chunk[i][key]).upper() == txt:
+                        i += 1
+                    e_idx = i - 1
+                    
+                    s_x = x_start + (s_idx * FIXED_GAP)
+                    e_x = x_start + (e_idx * FIXED_GAP)
+                    
+                    c.setLineWidth(0.8)
+                    c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off)
+                    mid = (s_x+e_x)/2
                     c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
+                    
                     if is_h:
-                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off-5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off-5)
-                        c.line(mid, y_curr+y_off, mid, y_curr+y_off+5); c.drawCentredString(mid, y_curr+y_off+10, txt)
+                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off-5)
+                        c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off-5)
+                        c.line(mid, y_curr+y_off, mid, y_curr+y_off+5)
+                        c.drawCentredString(mid, y_curr+y_off+10, txt)
                     else:
-                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
-                        c.line(mid, y_curr+y_off, mid, y_curr+y_off-5); c.drawCentredString(mid, y_curr+y_off-15, txt)
-                    i = j
+                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5)
+                        c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
+                        c.line(mid, y_curr+y_off, mid, y_curr+y_off-5)
+                        c.drawCentredString(mid, y_curr+y_off-15, txt)
             y_curr -= ROW_HEIGHT_SPACING 
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
-st.title("🚉 CTR Particular Generator (Multi-Function Fix)")
+st.title("🚉 CTR Particular Generator (Bracket Fix)")
 
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "DID HHG", "Cable Detail": "101-30C", "Terminal Number": "01"}])
@@ -161,7 +171,7 @@ with st.sidebar:
     st.header("Project Details")
     with st.expander("📂 Footer Settings", expanded=False):
         f_vals = [st.text_input("Prepared by", "NOVALINE"), st.text_input("Checked by (1)", "SSE/SIG"), st.text_input("Checked by (2)", "ASTE/SIG"), st.text_input("Approved by", "DY.CSTE"), st.text_input("LB/CTR/RR No.", "CTR-01"), st.text_input("RR/Goomty No.", "G-05"), st.text_input("Station", "BAITARANI ROAD"), st.text_input("SIP Number", "SIP/BTRD/2025"), "AUTO"]
-    with st.expander("📏 Font Sizes", expanded=False):
+    with st.expander("📏 Manual Font Sizes", expanded=False):
         fs = {'head': st.number_input("Function Font", 8.0), 'foot': st.number_input("Cable Detail Font", 7.0), 'term': st.number_input("Terminal Number Font", 7.0), 'row': st.number_input("Row ID Font", 12.0)}
     l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
 
