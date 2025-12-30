@@ -2,16 +2,15 @@ import streamlit as st
 import pandas as pd
 from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A4, A3, landscape
-from reportlab.pdfbase.pdfmetrics import stringWidth
 import re
 import io
 
 # --- LAYOUT CONSTANTS ---
 PAGE_MARGIN = 20  
-SAFETY_OFFSET = 42.5 # 1.5 cm distance from left margin line
+SAFETY_OFFSET = 42.5 # 1.5 cm safety distance
 
-# --- BULK ENTRY PARSER ---
 def parse_fixed_format(text):
+    """Parses pattern: A row, Label [1 to 5] into individual rows."""
     new_rows = []
     try:
         parts = [p.strip() for p in text.split(',')]
@@ -28,101 +27,102 @@ def parse_fixed_format(text):
                         "Row ID": rid, 
                         "Header": h_text, 
                         "Footer": "", 
-                        "Terminal ID": str(i).zfill(2)
+                        "Terminal ID": str(i).zfill(2) #
                     })
         return new_rows
     except: return None
 
-# --- PAGE LAYOUT TEMPLATE ---
-def draw_page_template(c, width, height, footer_data, left_col_data):
+def draw_page_template(c, width, height, footer_data, left_col_data, sheet_num):
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
     footer_y = PAGE_MARGIN + 60
     c.line(PAGE_MARGIN, footer_y, width - PAGE_MARGIN, footer_y)
-    box_w = (width - (2 * PAGE_MARGIN)) / 6
-    info_x = PAGE_MARGIN + box_w
+    
+    total_footer_width = width - (2 * PAGE_MARGIN)
+    info_x_width = total_footer_width / 12  # Halved Width
+    info_x = PAGE_MARGIN + info_x_width
+    
     c.line(info_x, PAGE_MARGIN, info_x, height - PAGE_MARGIN)
     c.line(PAGE_MARGIN, height - PAGE_MARGIN - 80, info_x, height - PAGE_MARGIN - 80)
-    for i in range(1, 6):
-        c.line(PAGE_MARGIN + (i * box_w), PAGE_MARGIN, PAGE_MARGIN + (i * box_w), footer_y)
-        
-    c.setFont("Helvetica-Bold", 7)
-    c.drawString(PAGE_MARGIN + 5, height - PAGE_MARGIN - 20, left_col_data['line1'].upper())
-    c.setFont("Helvetica", 6)
-    c.drawString(PAGE_MARGIN + 5, height - PAGE_MARGIN - 40, left_col_data['line2'].upper())
-    c.drawString(PAGE_MARGIN + 5, height - PAGE_MARGIN - 50, left_col_data['line3'].upper())
     
-    for i, box in enumerate(["box1", "box2", "box3", "box4", "box5", "box6"]):
-        x_c = PAGE_MARGIN + (i * box_w) + (box_w / 2)
-        lines = str(footer_data[box]).split('\n')
+    remaining_w = total_footer_width - info_x_width
+    other_box_w = remaining_w / 5
+    dividers = [info_x] + [info_x + (i * other_box_w) for i in range(1, 6)]
+    for x in dividers:
+        c.line(x, PAGE_MARGIN, x, footer_y)
+
+    c.setFont("Helvetica-Bold", 6)
+    c.drawString(PAGE_MARGIN + 3, height - PAGE_MARGIN - 20, left_col_data['line1'].upper())
+    c.setFont("Helvetica", 5)
+    c.drawString(PAGE_MARGIN + 3, height - PAGE_MARGIN - 40, left_col_data['line2'].upper())
+    c.drawString(PAGE_MARGIN + 3, height - PAGE_MARGIN - 50, left_col_data['line3'].upper())
+
+    for i in range(6):
+        x_start = PAGE_MARGIN if i == 0 else dividers[i-1]
+        x_end = dividers[i]
+        x_c = (x_start + x_end) / 2
+        # Automatic Sheet Numbering in box 6
+        text = f"SH NO: {sheet_num:03}" if i == 5 else str(footer_data[f"box{i+1}"])
+        lines = text.split('\n')
         for idx, line in enumerate(lines):
             c.drawCentredString(x_c, footer_y - 15 - (idx * 10), line.upper())
     return info_x
 
-# --- MAIN DRAWING ENGINE ---
 def process_drawing(df, fs, footer, left_col, page_size, gap):
     buffer = io.BytesIO()
     size = landscape(A3) if page_size == "A3" else landscape(A4)
-    c = canvas.Canvas(buffer, pagesize=size)
     width, height = size
-    info_x = draw_page_template(c, width, height, footer, left_col)
+    c = canvas.Canvas(buffer, pagesize=size)
     
-    # 1. REMOVE DUPLICATES AND SORT
-    df = df.dropna(subset=['Terminal ID'])
-    # Convert Terminal ID to numeric for sorting, but keep string for display
+    df = df.dropna(subset=['Terminal ID']).drop_duplicates(subset=['Row ID', 'Terminal ID'])
     df['sort_key'] = df['Terminal ID'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
-    # Drop duplicates to prevent multiple terminals on the same spot
-    df = df.drop_duplicates(subset=['Row ID', 'Terminal ID'], keep='first')
     df = df.sort_values(by=['Row ID', 'sort_key'])
     
-    rows = df.groupby('Row ID')
-    y_current, x_start = height - 160, info_x + SAFETY_OFFSET + 25
+    info_x_width = (width - (2 * PAGE_MARGIN)) / 12
+    max_draw_w = width - (PAGE_MARGIN + info_x_width) - SAFETY_OFFSET - 40
+    terminals_per_page = int(max_draw_w // gap)
     
+    sheet_count = 1
+    rows = df.groupby('Row ID')
     for rid, group in rows:
         terms = group.to_dict('records')
-        c.setFont("Helvetica-Bold", fs['row'])
-        c.drawRightString(x_start - 35, y_current + 15, str(rid))
-        
-        # Draw unique terminals
-        for idx, t in enumerate(terms):
-            tx = x_start + (idx * gap)
-            c.setLineWidth(1)
-            c.line(tx-3, y_current, tx-3, y_current+40)
-            c.line(tx+3, y_current, tx+3, y_current+40)
-            c.circle(tx, y_current+40, 3, stroke=1, fill=1)
-            c.circle(tx, y_current, 3, stroke=1, fill=1)
-            c.setFont("Helvetica-Bold", fs['term'])
-            c.drawRightString(tx-8, y_current+17, str(t['Terminal ID']).zfill(2))
-        
-        # Draw Brackets
-        for key, is_h, y_off in [('Header', True, 53.5), ('Footer', False, -13.5)]:
-            i = 0
-            while i < len(terms):
-                txt, s_x, j = str(terms[i][key]), x_start + (i * gap), i
-                while j < len(terms) and str(terms[j][key]) == txt:
-                    e_x, j = x_start + (j * gap), j + 1
-                c.setLineWidth(0.8)
-                c.line(s_x-5, y_current+y_off, e_x+5, y_current+y_off)
-                mid = (s_x+e_x)/2
-                c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
-                if is_h:
-                    c.line(s_x-5, y_current+y_off, s_x-5, y_current+y_off-5)
-                    c.line(e_x+5, y_current+y_off, e_x+5, y_current+y_off-5)
-                    c.line(mid, y_current+y_off, mid, y_current+y_off+5)
-                    c.drawCentredString(mid, y_current+y_off+10, txt)
-                else:
-                    c.line(s_x-5, y_current+y_off, s_x-5, y_current+y_off+5)
-                    c.line(e_x+5, y_current+y_off, e_x+5, y_current+y_off+5)
-                    c.line(mid, y_current+y_off, mid, y_current+y_off-5)
-                    c.drawCentredString(mid, y_current+y_off-15, txt)
-                i = j
-        y_current -= 160
+        chunks = [terms[i:i + terminals_per_page] for i in range(0, len(terms), terminals_per_page)]
+        for chunk in chunks:
+            info_x = draw_page_template(c, width, height, footer, left_col, sheet_count)
+            y_curr, x_start = height - 160, info_x + SAFETY_OFFSET + 20
+            c.setFont("Helvetica-Bold", fs['row'])
+            c.drawRightString(x_start - 30, y_curr + 15, str(rid))
+            for idx, t in enumerate(chunk):
+                tx = x_start + (idx * gap)
+                # Drawing Terminal Symbol: Vertical parallel lines with solid connection circles
+                c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
+                c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
+                c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal ID']).zfill(2))
+            
+            # Brackets for Header and Footer Groups
+            for key, is_h, y_off in [('Header', True, 53.5), ('Footer', False, -13.5)]:
+                i = 0
+                while i < len(chunk):
+                    txt, s_x, j = str(chunk[i][key]), x_start + (i * gap), i
+                    while j < len(chunk) and str(chunk[j][key]) == txt:
+                        e_x, j = x_start + (j * gap), j + 1
+                    c.setLineWidth(0.8); c.line(s_x-5, y_curr+y_off, e_x+5, y_current+y_off); mid = (s_x+e_x)/2
+                    c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
+                    if is_h:
+                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off-5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off-5)
+                        c.line(mid, y_curr+y_off, mid, y_curr+y_off+5); c.drawCentredString(mid, y_curr+y_off+10, txt)
+                    else:
+                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
+                        c.line(mid, y_curr+y_off, mid, y_curr+y_off-5); c.drawCentredString(mid, y_curr+y_off-15, txt)
+                    i = j
+            c.showPage(); sheet_count += 1
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
+# Initialize Session State with two guidance rows
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([
         {"Row ID": "A", "Header": "DID HHG (3RD)", "Footer": "101-30C TO LOC-89", "Terminal ID": "01"},
@@ -130,32 +130,45 @@ if 'df' not in st.session_state:
     ])
 
 with st.sidebar:
-    with st.expander("🛠️ Layout & Page", expanded=True):
+    with st.expander("🛠️ Layout Settings", expanded=True):
         p_size = st.selectbox("Page Size", ["A4", "A3"])
-        m_gap = st.slider("Terminal Spacing", 20, 60, 35)
-    with st.expander("📏 Font Sizes", expanded=False):
-        fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
-    with st.expander("📝 Info", expanded=False):
-        l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
-        f_data = {f"box{i+1}": f"Label {i+1}" for i in range(6)}
+        m_gap = st.slider("Terminal Spacing (Gap)", 20, 60, 35)
+    
+    with st.expander("📏 Manual Font Sizes", expanded=True):
+        fs = {
+            'head': st.number_input("Header Font", value=8.0),
+            'foot': st.number_input("Footer Font", value=7.0),
+            'term': st.number_input("Terminal ID Font", value=7.0),
+            'row': st.number_input("Row ID Font", value=12.0)
+        }
+    
+    with st.expander("📝 Info Box & Footer"):
+        l_col = {'line1': st.text_input("Info Box Line 1", "COMPLETION DRAWING"), 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
+        f_data = {f"box{i+1}": st.text_area(f"Footer Box {i+1}", f"Label {i+1}", height=60) for i in range(6)}
 
-st.subheader("Data Entry")
-tab1, tab2 = st.tabs(["🚀 Bulk Pattern Entry", "📊 Individual Terminal Entry"])
-
-with tab1:
-    nlp_input = st.text_input("Pattern Entry (A row, Label [1 to 5])")
-    if st.button("Add Pattern"):
+# Unified Entry Section
+st.subheader("Data Input")
+nlp_input = st.text_input("Bulk Pattern Entry (Example: A row, Label [1 to 5])", placeholder="Enter your bulk pattern here...")
+col1, col2 = st.columns([1, 5])
+with col1:
+    if st.button("🚀 Apply Bulk Pattern"):
         parsed = parse_fixed_format(nlp_input)
         if parsed:
-            st.session_state.df = pd.concat([st.session_state.df, pd.DataFrame(parsed)], ignore_index=True)
+            st.session_state.df = pd.DataFrame(parsed) # This replaces existing data with the bulk data
+            st.success("Table updated with bulk pattern!")
+        else:
+            st.error("Invalid format. Use: A row, Label [1 to 5]")
 
-with tab2:
-    st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
-    if st.button("🗑️ Clear All Data"):
-        st.session_state.df = pd.DataFrame(columns=["Row ID", "Header", "Footer", "Terminal ID"])
-        st.rerun()
+# Unified Table visible for both methods
+st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
+
+if st.button("🗑️ Clear All Table Data"):
+    st.session_state.df = pd.DataFrame(columns=["Row ID", "Header", "Footer", "Terminal ID"])
+    st.rerun()
 
 if st.button("🚀 Generate PDF Drawing"):
     if not st.session_state.df.empty:
         pdf = process_drawing(st.session_state.df, fs, f_data, l_col, p_size, m_gap)
-        st.download_button("⬇️ Download PDF", data=pdf, file_name="CTR_Particular_Drawing.pdf")
+        st.download_button("⬇️ Download Drawing", data=pdf, file_name="CTR_Particular_Drawing.pdf")
+    else:
+        st.warning("Please enter terminal data first.")
