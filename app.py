@@ -14,7 +14,7 @@ PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 120 
 
 def parse_fixed_format_multi_function(text):
-    """Correctly maps cable details to specific terminal ranges."""
+    """Correctly maps specific cable details to specific terminal ranges."""
     new_rows = []
     try:
         first_comma = text.find(',')
@@ -44,7 +44,7 @@ def parse_fixed_format_multi_function(text):
     except Exception: return None
 
 def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num):
-    """Draws 9-compartment title block with fixed headers."""
+    """Draws peripheral boundary and 9-compartment title block."""
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
     footer_y = PAGE_MARGIN + 60
@@ -82,11 +82,12 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     return info_x
 
 def process_drawing(df, fs, footer_values, left_col):
-    """Stacks rows vertically and supports multiple distinct cable brackets per row."""
+    """Refactored grouping logic to allow different cable details on the same row."""
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
     
+    # 1. Deduplicate and Sort
     df = df.dropna(subset=['Terminal Number']).drop_duplicates(subset=['Row ID', 'Terminal Number'])
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
@@ -99,6 +100,7 @@ def process_drawing(df, fs, footer_values, left_col):
     sheet_count = 1; y_curr = height - 160 
     draw_page_template(c, width, height, footer_values, left_col, sheet_count)
     
+    # Group by Row ID but process chunks to maintain distinct cable detail brackets
     rows = df.groupby('Row ID')
     for rid, group in rows:
         terms = group.to_dict('records')
@@ -113,24 +115,28 @@ def process_drawing(df, fs, footer_values, left_col):
             x_start = info_x + SAFETY_OFFSET + 20
             c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid).upper())
             
+            # Draw Terminals
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * FIXED_GAP)
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                 c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
-            # Logic to find and draw separate brackets for different text within same row
+            # INDEPENDENT BRACKET LOGIC: Function (Top) and Cable Detail (Bottom)
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
-                    txt = str(chunk[i][key]).upper()
+                    txt = str(chunk[i][key]).upper().strip()
                     if not txt: 
                         i += 1
                         continue
+                    
                     s_idx = i
-                    while i < len(chunk) and str(chunk[i][key]).upper() == txt:
+                    # The bracket MUST stop if the text changes, even within the same row
+                    while i < len(chunk) and str(chunk[i][key]).upper().strip() == txt:
                         i += 1
                     e_idx = i - 1
+                    
                     s_x, e_x = x_start + (s_idx * FIXED_GAP), x_start + (e_idx * FIXED_GAP)
                     c.setLineWidth(0.8); c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off); mid = (s_x+e_x)/2
                     c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
@@ -157,7 +163,8 @@ with st.sidebar:
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
     l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
 
-st.subheader("Data Input")
+st.subheader("Multi-Cable TXT Entry")
+st.info("Format: Row ID, Functions [Range], Cable Detail")
 uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
 if uploaded_file:
     stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
