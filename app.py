@@ -14,8 +14,8 @@ def parse_fixed_format(text):
     new_rows = []
     try:
         parts = [p.strip() for p in text.split(',')]
-        # Identify Row ID (e.g., "A row" or just "A")
-        row_id_match = re.search(r'^([A-Z]|\d+)', parts[0], re.I)
+        # Identify Row ID (Prioritize Alphabetical Row ID as requested)
+        row_id_match = re.search(r'^([A-Z])', parts[0], re.I)
         if not row_id_match: return None
         rid = row_id_match.group(1).upper()
         
@@ -70,12 +70,13 @@ def draw_page_template(c, width, height, footer_data, left_col_data, sheet_num):
     return info_x
 
 def process_drawing(df, fs, footer, left_col, page_size, gap):
-    """Processes drawing with updated Row ID terminology."""
+    """Processes terminal drawing with 1.5cm offset."""
     buffer = io.BytesIO()
     size = landscape(A3) if page_size == "A3" else landscape(A4)
     width, height = size
     c = canvas.Canvas(buffer, pagesize=size)
     
+    # 1. Deduplicate and Sort
     df = df.dropna(subset=['Terminal Number']).drop_duplicates(subset=['Row ID', 'Terminal Number'])
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
@@ -97,11 +98,12 @@ def process_drawing(df, fs, footer, left_col, page_size, gap):
             
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * gap)
-                # Terminal Symbol
+                # Terminal Symbol Rendering
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                 c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
+            # Brackets
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
@@ -125,16 +127,15 @@ def process_drawing(df, fs, footer, left_col, page_size, gap):
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
-# Initialize Session State
+# Initialize Session State with alphabetical examples
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([
-        {"Row ID": "1", "Function": "DID HHG (3RD)", "Cable Detail": "101-30C TO LOC-89", "Terminal Number": "01"},
-        {"Row ID": "1", "Function": "DID HHG (3RD)", "Cable Detail": "101-30C TO LOC-89", "Terminal Number": "02"}
+        {"Row ID": "A", "Function": "DID HHG (3RD)", "Cable Detail": "101-30C TO LOC-89", "Terminal Number": "01"},
+        {"Row ID": "A", "Function": "DID HHG (3RD)", "Cable Detail": "101-30C TO LOC-89", "Terminal Number": "02"}
     ])
 
 with st.sidebar:
     st.header("Settings")
-    # All expanders set to expanded=False to stay collapsed at start
     with st.expander("🛠️ Layout Settings", expanded=False):
         p_size = st.selectbox("Page Size", ["A4", "A3"])
         m_gap = st.slider("Terminal Spacing (Gap)", 20, 60, 35)
@@ -145,12 +146,12 @@ with st.sidebar:
         f_data = {f"box{i+1}": st.text_area(f"Footer {i+1}", f"Label {i+1}", height=60) for i in range(6)}
 
 st.subheader("Data Entry")
-nlp_input = st.text_input("Bulk Entry (Format: 1 row, Function [1 to 4])", placeholder="1 row, DD DG [1 to 4], SPARES [5 to 10]")
+nlp_input = st.text_input("Bulk Entry (Format: A row, Function [1 to 4])", placeholder="A row, DD DG [1 to 4], SPARES [5 to 10]")
 if st.button("🚀 Apply Bulk Data"):
     parsed = parse_fixed_format(nlp_input)
     if parsed:
         st.session_state.df = pd.DataFrame(parsed)
-        st.success("Table updated!")
+        st.success("Table updated with alphabetical Row IDs!")
 
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
 
