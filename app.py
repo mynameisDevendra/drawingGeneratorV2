@@ -9,7 +9,7 @@ import google.generativeai as genai # Required for Gemini level NLP
 # Replace with your actual API Key or set as an environment variable
 GEMINI_API_KEY = "AIzaSyDoUG-Usx0LCR9RDDcwbGr0BU9u8Bw4qYA" 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+model = genai.GenerativeModel('models/gemini-1.5-flash')
 
 # --- GEMINI NLP INTERPRETER ---
 def gemini_nlp_parser(user_prompt):
