@@ -12,18 +12,23 @@ FIXED_GAP = 33        # Locked inter-terminal distance in points
 PAGE_SIZE = landscape(A3)
 
 def parse_fixed_format(text):
-    """Parses pattern: A row, Function [1 to 5] into individual rows."""
+    """Parses TXT lines and standardizes to Capital Letters."""
     new_rows = []
     try:
+        # Standardize: remove extra spaces and handle case
         parts = [p.strip() for p in text.split(',')]
         row_id_match = re.search(r'^([A-Z]|\d+)', parts[0], re.I)
         if not row_id_match: return None
         rid = row_id_match.group(1).upper()
         
         for group in parts[1:]:
-            match = re.search(r'([^\[]+)\[(\d+)\s+to\s+(\d+)\]', group, re.I)
+            # Regex handles spaces inside brackets automatically
+            match = re.search(r'([^\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]', group, re.I)
             if match:
-                func_text, start, end = match.group(1).strip(), int(match.group(2)), int(match.group(3))
+                func_text = match.group(1).strip().upper() # Force Capital
+                start = int(match.group(2))
+                end = int(match.group(3))
+                
                 for i in range(start, end + 1):
                     new_rows.append({
                         "Row ID": rid, 
@@ -35,7 +40,7 @@ def parse_fixed_format(text):
     except: return None
 
 def draw_page_template(c, width, height, footer_data, left_col_data, sheet_num):
-    """Draws the halved left column and 6-box footer for A3."""
+    """Draws halved left column and 6-box footer for A3."""
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
     footer_y = PAGE_MARGIN + 60
@@ -65,9 +70,9 @@ def draw_page_template(c, width, height, footer_data, left_col_data, sheet_num):
         x_end = dividers[i]
         x_c = (x_start + x_end) / 2
         text = f"SH NO: {sheet_num:03}" if i == 5 else str(footer_data[f"box{i+1}"])
-        lines = text.split('\n')
+        lines = text.upper().split('\n') # Force Capitals in Footer
         for idx, line in enumerate(lines):
-            c.drawCentredString(x_c, footer_y - 15 - (idx * 10), line.upper())
+            c.drawCentredString(x_c, footer_y - 15 - (idx * 10), line)
     return info_x
 
 def process_drawing(df, fs, footer, left_col):
@@ -92,8 +97,9 @@ def process_drawing(df, fs, footer, left_col):
         for chunk in chunks:
             info_x = draw_page_template(c, width, height, footer, left_col, sheet_count)
             y_curr, x_start = height - 160, info_x + SAFETY_OFFSET + 20
+            
             c.setFont("Helvetica-Bold", fs['row'])
-            c.drawRightString(x_start - 30, y_curr + 15, str(rid))
+            c.drawRightString(x_start - 30, y_curr + 15, str(rid).upper())
             
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * FIXED_GAP)
@@ -104,8 +110,8 @@ def process_drawing(df, fs, footer, left_col):
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
-                    txt, s_x, j = str(chunk[i][key]), x_start + (i * FIXED_GAP), i
-                    while j < len(chunk) and str(chunk[j][key]) == txt:
+                    txt, s_x, j = str(chunk[i][key]).upper(), x_start + (i * FIXED_GAP), i
+                    while j < len(chunk) and str(chunk[j][key]).upper() == txt:
                         e_x, j = x_start + (j * FIXED_GAP), j + 1
                     c.setLineWidth(0.8); c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off)
                     mid = (s_x+e_x)/2
@@ -139,22 +145,26 @@ with st.sidebar:
         l_col = {'line1': st.text_input("Line 1", "COMPLETION DRAWING"), 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
         f_data = {f"box{i+1}": st.text_area(f"Footer {i+1}", f"Label {i+1}", height=60) for i in range(6)}
 
-st.subheader("Data Input")
-uploaded_file = st.file_uploader("Upload .txt file (Multi-row entry)", type=["txt"])
+st.subheader("Data Upload")
+st.markdown("""**Format Guide**: `Row ID, Function [Start to End]`  
+*Example: A, DID HHG [1 to 10]*""")
+
+uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
 if uploaded_file:
     stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
     all_parsed = []
     for line in stringio:
-        parsed = parse_fixed_format(line.strip())
-        if parsed: all_parsed.extend(parsed)
-    if all_parsed: st.session_state.df = pd.DataFrame(all_parsed)
-
-nlp_input = st.text_input("Bulk Pattern Entry (A row, Function [1 to 4])")
-if st.button("🚀 Apply Bulk Entry"):
-    parsed = parse_fixed_format(nlp_input)
-    if parsed: st.session_state.df = pd.DataFrame(parsed)
+        if line.strip():
+            parsed = parse_fixed_format(line.strip())
+            if parsed: all_parsed.extend(parsed)
+    if all_parsed: 
+        st.session_state.df = pd.DataFrame(all_parsed)
+        st.success("File processed! All text converted to Standard Capitals.")
 
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
+
+if st.button("🗑️ Reset Table"):
+    st.session_state.df = pd.DataFrame(columns=["Row ID", "Function", "Cable Detail", "Terminal Number"]); st.rerun()
 
 if st.button("🚀 Generate A3 PDF"):
     if not st.session_state.df.empty:
