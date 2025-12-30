@@ -8,13 +8,13 @@ from datetime import datetime
 
 # --- LAYOUT CONSTANTS ---
 PAGE_MARGIN = 20  
-SAFETY_OFFSET = 42.5  # 1.5 cm safety distance
+SAFETY_OFFSET = 42.5  
 FIXED_GAP = 33        
 PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 120 
 
 def parse_fixed_format_multi_function(text):
-    """Correctly maps specific cable details to specific terminal ranges."""
+    """Protocol-based parser to map cables to specific ranges."""
     new_rows = []
     try:
         first_comma = text.find(',')
@@ -44,7 +44,7 @@ def parse_fixed_format_multi_function(text):
     except Exception: return None
 
 def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num):
-    """Draws 9-compartment title block with fixed headers."""
+    """Draws peripheral boundary and 9-compartment title block."""
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
     footer_y = PAGE_MARGIN + 60
@@ -82,12 +82,11 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     return info_x
 
 def process_drawing(df, fs, footer_values, left_col):
-    """Refactored Logic: Specifically forces Cable Detail brackets to break on text change."""
+    """Uses a per-terminal look-ahead protocol to break brackets on text change."""
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
     
-    # 1. Clean and sort all terminals
     df = df.dropna(subset=['Terminal Number']).drop_duplicates(subset=['Row ID', 'Terminal Number'])
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
@@ -114,55 +113,40 @@ def process_drawing(df, fs, footer_values, left_col):
             x_start = info_x + SAFETY_OFFSET + 20
             c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid).upper())
             
-            # Draw Terminals
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * FIXED_GAP)
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                 c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
-            # --- FIXED BRACKET RENDERING ---
-            # These two loops are now completely separate and do not influence each other
+            # protocol check for brackets
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
                     current_txt = str(chunk[i][key]).upper().strip()
-                    
-                    if not current_txt:
+                    if not current_txt: 
                         i += 1
                         continue
-                        
                     start_i = i
-                    # Look ahead: find exactly where this specific text group ends
+                    # The protocol: The bracket MUST break if text is different from the neighbor
                     while i < len(chunk) and str(chunk[i][key]).upper().strip() == current_txt:
                         i += 1
                     end_i = i - 1
-                    
-                    s_x = x_start + (start_i * FIXED_GAP)
-                    e_x = x_start + (end_i * FIXED_GAP)
-                    mid_x = (s_x + e_x) / 2
-                    
-                    c.setLineWidth(0.8)
-                    c.line(s_x - 5, y_curr + y_off, e_x + 5, y_curr + y_off)
+                    s_x, e_x = x_start + (start_i * FIXED_GAP), x_start + (end_i * FIXED_GAP)
+                    c.setLineWidth(0.8); c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off); mid_x = (s_x+e_x)/2
                     c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
-                    
-                    if is_h: # Function Header
-                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off-5)
-                        c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off-5)
-                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off+5)
-                        c.drawCentredString(mid_x, y_curr+y_off+10, current_txt)
-                    else: # Cable Detail Footer
-                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5)
-                        c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
-                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off-5)
-                        c.drawCentredString(mid_x, y_curr+y_off-15, current_txt)
-                        
+                    if is_h:
+                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off-5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off-5)
+                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off+5); c.drawCentredString(mid_x, y_curr+y_off+10, current_txt)
+                    else:
+                        c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
+                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off-5); c.drawCentredString(mid_x, y_curr+y_off-15, current_txt)
             y_curr -= ROW_HEIGHT_SPACING 
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
-st.title("🚉 CTR Particular Generator (Final Grouping Fix)")
+st.title("🚉 CTR Particular Generator")
 
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "DID HHG", "Cable Detail": "CABLE 1", "Terminal Number": "01"}])
@@ -175,7 +159,7 @@ with st.sidebar:
     l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
 
 st.subheader("Data Input")
-uploaded_file = st.file_uploader("Upload .txt file (Format: Row ID, Functions [Range], Cable Detail)", type=["txt"])
+uploaded_file = st.file_uploader("Upload .txt file (Row ID, Function [Range], Cable Detail)", type=["txt"])
 if uploaded_file:
     stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
     all_parsed = []
