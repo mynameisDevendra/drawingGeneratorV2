@@ -13,33 +13,36 @@ FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 120 
 
-def parse_fixed_format_with_cable(text):
+def parse_fixed_format_multi_function(text):
     """
-    Improved Parser: Correctly separates Function and Cable Detail.
-    Expected: Row ID, Function [Start to End], Cable Detail
+    Advanced Parser: Supports multiple functions per Row.
+    Format: Row ID, Func1 [1 to 4], Func2 [5 to 8], Cable Detail
     """
     new_rows = []
     try:
-        # Step 1: Extract Row ID (Everything before the first comma)
+        # 1. Isolate Row ID (Everything before first comma)
         first_comma = text.find(',')
         if first_comma == -1: return None
         rid = text[:first_comma].strip().upper()
         
-        # Step 2: Extract Cable Detail (Everything after the last comma)
+        # 2. Isolate Cable Detail (Everything after last comma)
         last_comma = text.rfind(',')
-        if last_comma == first_comma:
+        if last_comma <= first_comma:
             cable_detail = ""
             middle_part = text[first_comma+1:].strip()
         else:
             cable_detail = text[last_comma+1:].strip().upper()
             middle_part = text[first_comma+1:last_comma].strip()
         
-        # Step 3: Parse Function and Terminal Range
-        match = re.search(r'([^\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]', middle_part, re.I)
-        if match:
-            func_text = match.group(1).strip().upper() 
-            start = int(match.group(2))
-            end = int(match.group(3))
+        # 3. Find ALL Function [Range] patterns in the middle section
+        # Regex finds all occurrences of: Text [Number to Number]
+        pattern = r'([^,\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]'
+        matches = re.findall(pattern, middle_part, re.I)
+        
+        for match in matches:
+            func_text = match[0].strip().upper()
+            start = int(match[1])
+            end = int(match[2])
             
             for i in range(start, end + 1):
                 new_rows.append({
@@ -49,7 +52,7 @@ def parse_fixed_format_with_cable(text):
                     "Terminal Number": str(i).zfill(2)
                 })
         return new_rows
-    except Exception as e:
+    except Exception:
         return None
 
 def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num):
@@ -134,7 +137,7 @@ def process_drawing(df, fs, footer_values, left_col):
                 while i < len(chunk):
                     txt, s_x, j = str(chunk[i][key]).upper(), x_start + (i * FIXED_GAP), i
                     while j < len(chunk) and str(chunk[j][key]).upper() == txt:
-                        e_x, j = x_start + (j * FIXED_GAP), j + 1
+                        e_x, j = x_start + (j * gap if 'gap' in locals() else FIXED_GAP), j + 1
                     c.setLineWidth(0.8); c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off); mid = (s_x+e_x)/2
                     c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
                     if is_h:
@@ -149,7 +152,7 @@ def process_drawing(df, fs, footer_values, left_col):
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
-st.title("🚉 CTR Particular Generator")
+st.title("🚉 CTR Particular Generator (Multi-Function Fix)")
 
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "DID HHG", "Cable Detail": "101-30C", "Terminal Number": "01"}])
@@ -157,15 +160,7 @@ if 'df' not in st.session_state:
 with st.sidebar:
     st.header("Project Details")
     with st.expander("📂 Footer Settings", expanded=False):
-        f_prep = st.text_input("Prepared by", "NOVALINE")
-        f_chk1 = st.text_input("Checked by (1)", "SSE/SIG")
-        f_chk2 = st.text_input("Checked by (2)", "ASTE/SIG")
-        f_appr = st.text_input("Approved by", "DY.CSTE")
-        f_lb_no = st.text_input("LB/CTR/RR Number", "CTR-01")
-        f_goomty = st.text_input("RR/Goomty Number", "G-05")
-        f_station = st.text_input("Station", "BAITARANI ROAD")
-        f_sip = st.text_input("SIP Number", "SIP/BTRD/2025")
-        f_vals = [f_prep, f_chk1, f_chk2, f_appr, f_lb_no, f_goomty, f_station, f_sip, "AUTO"]
+        f_vals = [st.text_input("Prepared by", "NOVALINE"), st.text_input("Checked by (1)", "SSE/SIG"), st.text_input("Checked by (2)", "ASTE/SIG"), st.text_input("Approved by", "DY.CSTE"), st.text_input("LB/CTR/RR No.", "CTR-01"), st.text_input("RR/Goomty No.", "G-05"), st.text_input("Station", "BAITARANI ROAD"), st.text_input("SIP Number", "SIP/BTRD/2025"), "AUTO"]
     with st.expander("📏 Font Sizes", expanded=False):
         fs = {'head': st.number_input("Function Font", 8.0), 'foot': st.number_input("Cable Detail Font", 7.0), 'term': st.number_input("Terminal Number Font", 7.0), 'row': st.number_input("Row ID Font", 12.0)}
     l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
@@ -177,7 +172,7 @@ if uploaded_file:
     all_parsed = []
     for line in stringio:
         if line.strip():
-            parsed = parse_fixed_format_with_cable(line.strip())
+            parsed = parse_fixed_format_multi_function(line.strip())
             if parsed: all_parsed.extend(parsed)
     if all_parsed: st.session_state.df = pd.DataFrame(all_parsed)
 
@@ -187,5 +182,5 @@ if st.button("🚀 Generate PDF Drawing"):
     if not st.session_state.df.empty:
         pdf = process_drawing(st.session_state.df, fs, f_vals, l_col)
         date_str = datetime.now().strftime("%d-%m-%Y")
-        file_name = f"{f_lb_no}_{f_goomty}_{f_station}_{date_str}.pdf".replace(" ", "_")
+        file_name = f"{f_vals[4]}_{f_vals[5]}_{f_vals[6]}_{date_str}.pdf".replace(" ", "_")
         st.download_button("⬇️ Download PDF Drawing", data=pdf, file_name=file_name)
