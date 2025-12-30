@@ -14,7 +14,7 @@ PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 120 
 
 def parse_fixed_format_multi_function(text):
-    """Protocol-based parser to map cables to specific ranges."""
+    """Protocol-based parser: Maps specific cable details to specific terminal ranges."""
     new_rows = []
     try:
         first_comma = text.find(',')
@@ -44,7 +44,7 @@ def parse_fixed_format_multi_function(text):
     except Exception: return None
 
 def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num):
-    """Draws peripheral boundary and 9-compartment title block."""
+    """Draws 9-compartment title block with fixed headers."""
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
     footer_y = PAGE_MARGIN + 60
@@ -62,12 +62,6 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     dividers = [info_x + (i * box_w) for i in range(9)] 
     for x in dividers[:-1]: c.line(x, PAGE_MARGIN, x, footer_y)
 
-    c.setFont("Helvetica-Bold", 6)
-    c.drawString(PAGE_MARGIN + 3, height - PAGE_MARGIN - 20, left_col_data['line1'].upper())
-    c.setFont("Helvetica", 5)
-    c.drawString(PAGE_MARGIN + 3, height - PAGE_MARGIN - 40, left_col_data['line2'].upper())
-    c.drawString(PAGE_MARGIN + 3, height - PAGE_MARGIN - 50, left_col_data['line3'].upper())
-
     headers = ["PREPARED BY", "CHECKED BY", "CHECKED BY", "APPROVED BY", "LB/CTR/RR NO.", "RR/GOOMTY NO.", "STATION", "SIP", "SHEET NO."]
     for i in range(9):
         x_start = PAGE_MARGIN if i == 0 else dividers[i-1]
@@ -82,7 +76,7 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     return info_x
 
 def process_drawing(df, fs, footer_values, left_col):
-    """Uses a per-terminal look-ahead protocol to break brackets on text change."""
+    """Refactored logic for multi-cable vertical stacking."""
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
@@ -119,17 +113,15 @@ def process_drawing(df, fs, footer_values, left_col):
                 c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
-            # protocol check for brackets
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
-                    current_txt = str(chunk[i][key]).upper().strip()
-                    if not current_txt: 
+                    txt = str(chunk[i][key]).upper().strip()
+                    if not txt: 
                         i += 1
                         continue
                     start_i = i
-                    # The protocol: The bracket MUST break if text is different from the neighbor
-                    while i < len(chunk) and str(chunk[i][key]).upper().strip() == current_txt:
+                    while i < len(chunk) and str(chunk[i][key]).upper().strip() == txt:
                         i += 1
                     end_i = i - 1
                     s_x, e_x = x_start + (start_i * FIXED_GAP), x_start + (end_i * FIXED_GAP)
@@ -137,19 +129,16 @@ def process_drawing(df, fs, footer_values, left_col):
                     c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
                     if is_h:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off-5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off-5)
-                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off+5); c.drawCentredString(mid_x, y_curr+y_off+10, current_txt)
+                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off+5); c.drawCentredString(mid_x, y_curr+y_off+10, txt)
                     else:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
-                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off-5); c.drawCentredString(mid_x, y_curr+y_off-15, current_txt)
+                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off-5); c.drawCentredString(mid_x, y_curr+y_off-15, txt)
             y_curr -= ROW_HEIGHT_SPACING 
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
-
-if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "DID HHG", "Cable Detail": "CABLE 1", "Terminal Number": "01"}])
 
 with st.sidebar:
     st.header("Project Details")
@@ -158,8 +147,24 @@ with st.sidebar:
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
     l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
 
-st.subheader("Data Input")
-uploaded_file = st.file_uploader("Upload .txt file (Row ID, Function [Range], Cable Detail)", type=["txt"])
+# PERMANENT INSTRUCTIONS
+with st.expander("📖 TXT Format & Cable Protocol", expanded=True):
+    st.markdown("""
+    ### Important: Cable-Wise Data Entry Protocol
+    To show separate cable brackets on the same row, your `.txt` file must be structured cable-wise:
+    1. **Format**: `Row ID, Function [Start to End], Cable Detail`
+    2. **Protocol**: Each unique cable MUST have its own line.
+    3. **Vertical Stacking**: Use the same Row ID to keep terminals on the same horizontal line.
+    
+    **Example for Row A with two cables:**
+    ```text
+    A, DID HHG [1 to 10], 101-30C TO LOC-89
+    A, DID DG [11 to 20], 102-12C TO LOC-90
+    ```
+    """)
+
+st.subheader("Data Upload")
+uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
 if uploaded_file:
     stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
     all_parsed = []
@@ -168,6 +173,9 @@ if uploaded_file:
             parsed = parse_fixed_format_multi_function(line.strip())
             if parsed: all_parsed.extend(parsed)
     if all_parsed: st.session_state.df = pd.DataFrame(all_parsed)
+
+if 'df' not in st.session_state:
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "DID HHG", "Cable Detail": "CABLE 1", "Terminal Number": "01"}])
 
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
 
