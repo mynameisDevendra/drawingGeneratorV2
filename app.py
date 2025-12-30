@@ -10,24 +10,25 @@ PAGE_MARGIN = 20
 SAFETY_OFFSET = 42.5 # 1.5 cm safety distance
 
 def parse_fixed_format(text):
-    """Parses pattern: A row, Label [1 to 5] into individual rows."""
+    """Parses pattern: 1 row, Function [1 to 5] into individual rows."""
     new_rows = []
     try:
         parts = [p.strip() for p in text.split(',')]
-        row_id_match = re.search(r'^([A-Z])', parts[0], re.I)
+        # Identify Row Number (e.g., "1 row" or just "1")
+        row_id_match = re.search(r'^(\d+|[A-Z])', parts[0], re.I)
         if not row_id_match: return None
         rid = row_id_match.group(1).upper()
         
         for group in parts[1:]:
             match = re.search(r'([^\[]+)\[(\d+)\s+to\s+(\d+)\]', group, re.I)
             if match:
-                h_text, start, end = match.group(1).strip(), int(match.group(2)), int(match.group(3))
+                func_text, start, end = match.group(1).strip(), int(match.group(2)), int(match.group(3))
                 for i in range(start, end + 1):
                     new_rows.append({
-                        "Row ID": rid, 
-                        "Header": h_text, 
-                        "Footer": "", 
-                        "Terminal ID": str(i).zfill(2)
+                        "Row Number": rid, 
+                        "Function": func_text, 
+                        "Cable Detail": "", 
+                        "Terminal Number": str(i).zfill(2)
                     })
         return new_rows
     except: return None
@@ -69,24 +70,23 @@ def draw_page_template(c, width, height, footer_data, left_col_data, sheet_num):
     return info_x
 
 def process_drawing(df, fs, footer, left_col, page_size, gap):
-    """Processes terminal drawing with multi-page overflow."""
+    """Processes drawing with updated terminology."""
     buffer = io.BytesIO()
     size = landscape(A3) if page_size == "A3" else landscape(A4)
     width, height = size
     c = canvas.Canvas(buffer, pagesize=size)
     
-    # 1. Deduplicate and Sort
-    df = df.dropna(subset=['Terminal ID']).drop_duplicates(subset=['Row ID', 'Terminal ID'])
-    df['sort_key'] = df['Terminal ID'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
-    df = df.sort_values(by=['Row ID', 'sort_key'])
+    # 1. Clean and Sort using new column names
+    df = df.dropna(subset=['Terminal Number']).drop_duplicates(subset=['Row Number', 'Terminal Number'])
+    df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
+    df = df.sort_values(by=['Row Number', 'sort_key'])
     
-    # 2. Capacity calculation
     info_x_width = (width - (2 * PAGE_MARGIN)) / 12
     max_draw_w = width - (PAGE_MARGIN + info_x_width) - SAFETY_OFFSET - 40
     terminals_per_page = int(max_draw_w // gap)
     
     sheet_count = 1
-    rows = df.groupby('Row ID')
+    rows = df.groupby('Row Number')
     for rid, group in rows:
         terms = group.to_dict('records')
         chunks = [terms[i:i + terminals_per_page] for i in range(0, len(terms), terminals_per_page)]
@@ -101,10 +101,10 @@ def process_drawing(df, fs, footer, left_col, page_size, gap):
                 # Terminal Symbol
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                 c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
-                c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal ID']).zfill(2))
+                c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
-            # Grouping Brackets
-            for key, is_h, y_off in [('Header', True, 53.5), ('Footer', False, -13.5)]:
+            # Brackets for Function (Header) and Cable Detail (Footer)
+            for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
                     txt, s_x, j = str(chunk[i][key]), x_start + (i * gap), i
@@ -112,7 +112,6 @@ def process_drawing(df, fs, footer, left_col, page_size, gap):
                         e_x, j = x_start + (j * gap), j + 1
                     
                     c.setLineWidth(0.8)
-                    # Corrected Variable: y_curr instead of y_current
                     c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off)
                     mid = (s_x+e_x)/2
                     c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
@@ -132,10 +131,11 @@ def process_drawing(df, fs, footer, left_col, page_size, gap):
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
+# Initialize with updated column names
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([
-        {"Row ID": "A", "Header": "DID HHG (3RD)", "Footer": "101-30C TO LOC-89", "Terminal ID": "01"},
-        {"Row ID": "A", "Header": "DID HHG (3RD)", "Footer": "101-30C TO LOC-89", "Terminal ID": "02"}
+        {"Row Number": "1", "Function": "DID HHG (3RD)", "Cable Detail": "101-30C TO LOC-89", "Terminal Number": "01"},
+        {"Row Number": "1", "Function": "DID HHG (3RD)", "Cable Detail": "101-30C TO LOC-89", "Terminal Number": "02"}
     ])
 
 with st.sidebar:
@@ -143,24 +143,23 @@ with st.sidebar:
         p_size = st.selectbox("Page Size", ["A4", "A3"])
         m_gap = st.slider("Terminal Spacing (Gap)", 20, 60, 35)
     with st.expander("📏 Manual Font Sizes", expanded=True):
-        fs = {'head': st.number_input("Header", 8.0), 'foot': st.number_input("Footer", 7.0), 'term': st.number_input("Terminal", 7.0), 'row': st.number_input("Row", 12.0)}
+        fs = {'head': st.number_input("Function Font", value=8.0), 'foot': st.number_input("Cable Detail Font", value=7.0), 'term': st.number_input("Terminal Number Font", value=7.0), 'row': st.number_input("Row Number Font", value=12.0)}
     with st.expander("📝 Info Box & Footer"):
         l_col = {'line1': st.text_input("Line 1", "COMPLETION DRAWING"), 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
         f_data = {f"box{i+1}": st.text_area(f"Footer {i+1}", f"Label {i+1}", height=60) for i in range(6)}
 
-st.subheader("Unified Terminal Data Entry")
-nlp_input = st.text_input("Bulk Pattern Entry (A row, DD DG [1 to 4])")
-if st.button("🚀 Apply Bulk Data to Table"):
+st.subheader("Data Entry")
+nlp_input = st.text_input("Bulk Entry (Format: 1 row, Function [1 to 4])", placeholder="1 row, DD DG [1 to 4], SPARES [5 to 10]")
+if st.button("🚀 Apply Bulk Data"):
     parsed = parse_fixed_format(nlp_input)
     if parsed:
-        st.session_state.df = pd.DataFrame(parsed) # REPLACES existing data
-        st.success("Table updated with bulk input!")
+        st.session_state.df = pd.DataFrame(parsed)
+        st.success("Table updated!")
 
-# Unified Data Table for both methods
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
 
 if st.button("🗑️ Reset Table"):
-    st.session_state.df = pd.DataFrame(columns=["Row ID", "Header", "Footer", "Terminal ID"]); st.rerun()
+    st.session_state.df = pd.DataFrame(columns=["Row Number", "Function", "Cable Detail", "Terminal Number"]); st.rerun()
 
 if st.button("🚀 Generate PDF Drawing"):
     if not st.session_state.df.empty:
