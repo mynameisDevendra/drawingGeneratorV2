@@ -7,11 +7,11 @@ import io
 from datetime import datetime
 
 # --- LAYOUT CONSTANTS ---
-PAGE_MARGIN = 20  
-SAFETY_OFFSET = 42.5  
-FIXED_GAP = 33        
+PAGE_MARGIN = 20
+SAFETY_OFFSET = 42.5
+FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
-ROW_HEIGHT_SPACING = 120 
+ROW_HEIGHT_SPACING = 105  # Adjusted to fit 6 rows comfortably
 
 def parse_fixed_format_multi_function(text):
     """Protocol-based parser: Maps specific cable details to specific terminal ranges."""
@@ -43,10 +43,17 @@ def parse_fixed_format_multi_function(text):
         return new_rows
     except Exception: return None
 
-def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num):
-    """Draws 9-compartment title block with fixed headers."""
+def draw_page_template(c, width, height, footer_values, sheet_num, main_heading):
+    """Draws title block, borders, and the editable main heading."""
+    # 1. Draw Main Border
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
+    
+    # 2. Draw Main Heading (Top Center)
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(width / 2, height - 60, main_heading.upper())
+    
+    # 3. Draw Footer Block
     footer_y = PAGE_MARGIN + 60
     c.line(PAGE_MARGIN, footer_y, width - PAGE_MARGIN, footer_y)
     
@@ -55,7 +62,6 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
     info_x = PAGE_MARGIN + info_x_width
     
     c.line(info_x, PAGE_MARGIN, info_x, height - PAGE_MARGIN)
-    c.line(PAGE_MARGIN, height - PAGE_MARGIN - 80, info_x, height - PAGE_MARGIN - 80)
     
     remaining_w = total_footer_w - info_x_width
     box_w = remaining_w / 8
@@ -75,8 +81,8 @@ def draw_page_template(c, width, height, footer_values, left_col_data, sheet_num
             c.drawCentredString(x_c, footer_y - 25 - (idx * 10), line)
     return info_x
 
-def process_drawing(df, fs, footer_values, left_col):
-    """Refactored logic for multi-cable vertical stacking."""
+def process_drawing(df, fs, footer_values, main_heading):
+    """Generates PDF with exactly 6 rows per page."""
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
@@ -90,8 +96,12 @@ def process_drawing(df, fs, footer_values, left_col):
     max_draw_w = width - info_x - SAFETY_OFFSET - 40
     terminals_per_row = int(max_draw_w // FIXED_GAP)
     
-    sheet_count = 1; y_curr = height - 160 
-    draw_page_template(c, width, height, footer_values, left_col, sheet_count)
+    sheet_count = 1
+    y_start = height - 160 # Adjusted for top heading
+    y_curr = y_start
+    rows_on_page = 0
+    
+    draw_page_template(c, width, height, footer_values, sheet_count, main_heading)
     
     rows = df.groupby('Row ID')
     for rid, group in rows:
@@ -99,10 +109,13 @@ def process_drawing(df, fs, footer_values, left_col):
         chunks = [terms[i:i + terminals_per_row] for i in range(0, len(terms), terminals_per_row)]
         
         for chunk in chunks:
-            if y_curr < 200: 
-                c.showPage(); sheet_count += 1
-                draw_page_template(c, width, height, footer_values, left_col, sheet_count)
-                y_curr = height - 160
+            # Page break logic: Restrict to 6 rows
+            if rows_on_page >= 6:
+                c.showPage()
+                sheet_count += 1
+                draw_page_template(c, width, height, footer_values, sheet_count, main_heading)
+                y_curr = y_start
+                rows_on_page = 0
             
             x_start = info_x + SAFETY_OFFSET + 20
             c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid).upper())
@@ -133,28 +146,20 @@ def process_drawing(df, fs, footer_values, left_col):
                     else:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
                         c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off-5); c.drawCentredString(mid_x, y_curr+y_off-15, txt)
-            y_curr -= ROW_HEIGHT_SPACING 
+            
+            y_curr -= ROW_HEIGHT_SPACING
+            rows_on_page += 1
+
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="CTR Particular Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
-# --- SIDEBAR: PROTOCOL & SETTINGS ---
 with st.sidebar:
-    st.header("📖 TXT Format Protocol")
-    st.markdown("""
-    **To show separate cable brackets on the same row, follow this rule:**
-    1. **One Line Per Cable**: Each line in your `.txt` file represents one cable.
-    2. **Same Row ID**: Keep the Row ID same to stack horizontally.
-    3. **Example**:
-    ```text
-    A, DID HHG [1 to 5], CABLE-01
-    A, SPARES [6 to 10], CABLE-02
-    ```
-    """)
-    st.divider()
     st.header("Project Details")
+    main_heading = st.text_input("Main Page Heading", "TERMINAL CHART / CTR PARTICULARS")
+    
     with st.expander("📂 Footer Settings", expanded=False):
         f_vals = [
             st.text_input("Prepared by", "NOVALINE"), 
@@ -168,11 +173,9 @@ with st.sidebar:
             "AUTO"
         ]
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
-    l_col = {'line1': "COMPLETION DRAWING", 'line2': "PCSTE'S REF NO.", 'line3': "7132/24"}
 
-# --- MAIN INTERFACE ---
 st.subheader("Data Upload")
-uploaded_file = st.file_uploader("Upload .txt file (Follow sidebar protocol)", type=["txt"])
+uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
 
 if uploaded_file:
     stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
@@ -190,7 +193,7 @@ st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", us
 
 if st.button("🚀 Generate PDF Drawing"):
     if not st.session_state.df.empty:
-        pdf = process_drawing(st.session_state.df, fs, f_vals, l_col)
+        pdf = process_drawing(st.session_state.df, fs, f_vals, main_heading)
         date_str = datetime.now().strftime("%d-%m-%Y")
-        file_name = f"{f_vals[4]}_{f_vals[5]}_{f_vals[6]}_{date_str}.pdf".replace(" ", "_")
+        file_name = f"{f_vals[4]}_{f_vals[6]}_{date_str}.pdf".replace(" ", "_")
         st.download_button("⬇️ Download PDF Drawing", data=pdf, file_name=file_name)
