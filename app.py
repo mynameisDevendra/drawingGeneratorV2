@@ -130,7 +130,6 @@ def draw_page_template(c, width, height, footer_values, sheet_num, page_heading)
     dividers = [info_x + (i * box_w) for i in range(8)] 
     for x in dividers[:-1]: c.line(x, PAGE_MARGIN, x, footer_y)
 
-    # TEXT LABELS: Doubled Font Size (9.0)
     headers = ["PREPARED BY", "CHECKED BY", "CHECKED BY", "APPROVED BY", "LOCATION NO / GOOMTY / RR", "STATION", "SIP", "SHEET NO."]
     
     for i in range(8):
@@ -138,14 +137,14 @@ def draw_page_template(c, width, height, footer_values, sheet_num, page_heading)
         x_end = dividers[i]
         x_c = (x_start + x_end) / 2
         
-        # DRAW "PREPARED BY" ETC AT BOTTOM (Large Bold Font)
-        c.setFont("Helvetica-Bold", 8.0 if i == 4 else 9.0)
-        c.drawCentredString(x_c, PAGE_MARGIN + 12, headers[i])
+        # 1. FIXED HEADER (e.g. PREPARED BY) - AT TOP OF BOX
+        c.setFont("Helvetica-Bold", 9.0)
+        c.drawCentredString(x_c, footer_y - 15, headers[i])
         
-        # DRAW USER VALUES ABOVE THE LABELS
-        c.setFont("Helvetica", 7.5)
+        # 2. USER INPUT (e.g. JE/SIG) - AT BOTTOM OF BOX
+        c.setFont("Helvetica", 8.0)
         val = f"{sheet_num:02}" if i == 7 else str(footer_values[i])
-        c.drawCentredString(x_c, footer_y - 20, val.upper())
+        c.drawCentredString(x_c, PAGE_MARGIN + 15, val.upper())
     return info_x
 
 def process_multi_sheet_pdf(sheets_list, sig_data):
@@ -206,9 +205,9 @@ with st.sidebar:
     st.header("📂 Resources")
     st.download_button("📥 Download Sample TXT", SAMPLE_CONTENT, "sample_ctr.txt", "text/plain", use_container_width=True)
     st.divider()
-    with st.expander("✒️ Signature Details", expanded=False):
-        sig_data = {"prep": st.text_input("Name (Prepared By)", "NAME"), "chk1": st.text_input("Name (Checked SSE)", "NAME"), 
-                    "chk2": st.text_input("Name (Checked ASTE)", "NAME"), "app": st.text_input("Name (Approved By)", "NAME")}
+    with st.expander("✒️ Signature Names", expanded=False):
+        sig_data = {"prep": st.text_input("Name/Desig (Prepared)", "JE/SIG"), "chk1": st.text_input("Name/Desig (SSE)", "SSE/SIG"), 
+                    "chk2": st.text_input("Name/Desig (ASTE)", "ASTE"), "app": st.text_input("Name/Desig (DSTE)", "DSTE")}
 
 st.title("🚉 Multi-Sheet CTR Generator")
 
