@@ -155,8 +155,8 @@ st.title("🚉 CTR Particular Generator")
 
 # --- LEFT SIDEBAR: INSTRUCTIONS & SETTINGS ---
 with st.sidebar:
-    # 1. INSTRUCTIONS BUTTON / SECTION
-    with st.expander("ℹ️ Instructions: How to Use", expanded=True):
+    # 1. INSTRUCTIONS SECTION - CHANGED 'expanded' to False
+    with st.expander("ℹ️ Instructions: How to Use", expanded=False):
         st.markdown("""
         **Step 1: Prepare TXT File**
         Follow this specific format in Notepad:
@@ -174,7 +174,10 @@ with st.sidebar:
         Adjust the Page Heading and Footer details below.
         
         **Step 4: Generate**
-        Download the A3 PDF (max 6 rows per page).
+        A3 PDF Drawing.
+	
+	**Step 5: Download**
+         PDF.
         """)
 
     st.divider()
