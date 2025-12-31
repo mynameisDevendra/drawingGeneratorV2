@@ -184,7 +184,7 @@ if uploaded_file:
         st.success(f"Successfully loaded {len(st.session_state.df)} terminals.")
 
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "", "Terminal Number": "01"}])
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "30C RR TO GOOMTY-01", "Terminal Number": "01"}])
 
 # Table Interface Note
 st.caption("💡 Tip: Use the icons at the top-right of the table below to download the data as a CSV or search for specific terms.")
