@@ -11,56 +11,58 @@ PAGE_MARGIN = 20
 SAFETY_OFFSET = 42.5
 FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
-ROW_HEIGHT_SPACING = 105  # Adjusted to fit 6 rows comfortably
+ROW_HEIGHT_SPACING = 105 
 
 def parse_fixed_format_multi_function(text):
-    """Protocol-based parser: Maps specific cable details to specific terminal ranges."""
+    """Enhanced Parser to prevent skipping rows like Row E."""
     new_rows = []
     try:
-        first_comma = text.find(',')
-        if first_comma == -1: return None
-        rid = text[:first_comma].strip().upper()
+        # Split by first and last comma to isolate Row ID and Cable Detail
+        parts = text.split(',')
+        if len(parts) < 2: return None
         
-        last_comma = text.rfind(',')
-        if last_comma <= first_comma:
-            cable_detail = ""
-            middle_part = text[first_comma+1:].strip()
-        else:
-            cable_detail = text[last_comma+1:].strip().upper()
-            middle_part = text[first_comma+1:last_comma].strip()
+        rid = parts[0].strip().upper()
         
+        # Cable detail is usually the last part
+        cable_detail = parts[-1].strip().upper()
+        
+        # Middle part contains the functions and ranges
+        middle_part = ",".join(parts[1:-1]).strip()
+        if not middle_part: # Handle case where there might only be 2 parts
+             middle_part = parts[1].strip()
+        
+        # Pattern to find: Function [Start to End]
         pattern = r'([^,\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]'
         matches = re.findall(pattern, middle_part, re.I)
         
+        if not matches:
+            return None
+
         for match in matches:
             func_text = match[0].strip().upper()
             start, end = int(match[1]), int(match[2])
             for i in range(start, end + 1):
                 new_rows.append({
-                    "Row ID": rid, "Function": func_text, 
-                    "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)
+                    "Row ID": rid, 
+                    "Function": func_text, 
+                    "Cable Detail": cable_detail, 
+                    "Terminal Number": str(i).zfill(2)
                 })
         return new_rows
-    except Exception: return None
+    except Exception as e:
+        return None
 
 def draw_page_template(c, width, height, footer_values, sheet_num, main_heading):
-    """Draws title block, borders, and the editable main heading."""
-    # 1. Draw Main Border
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
-    
-    # 2. Draw Main Heading (Top Center)
     c.setFont("Helvetica-Bold", 16)
     c.drawCentredString(width / 2, height - 60, main_heading.upper())
     
-    # 3. Draw Footer Block
     footer_y = PAGE_MARGIN + 60
     c.line(PAGE_MARGIN, footer_y, width - PAGE_MARGIN, footer_y)
-    
     total_footer_w = width - (2 * PAGE_MARGIN)
     info_x_width = total_footer_w / 15  
     info_x = PAGE_MARGIN + info_x_width
-    
     c.line(info_x, PAGE_MARGIN, info_x, height - PAGE_MARGIN)
     
     remaining_w = total_footer_w - info_x_width
@@ -82,50 +84,45 @@ def draw_page_template(c, width, height, footer_values, sheet_num, main_heading)
     return info_x
 
 def process_drawing(df, fs, footer_values, main_heading):
-    """Generates PDF with exactly 6 rows per page."""
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
     
-    df = df.dropna(subset=['Terminal Number']).drop_duplicates(subset=['Row ID', 'Terminal Number'])
+    # Sort data correctly
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
     
-    info_x_width = (width - (2 * PAGE_MARGIN)) / 15
-    info_x = PAGE_MARGIN + info_x_width
+    info_x = PAGE_MARGIN + ((width - (2 * PAGE_MARGIN)) / 15)
     max_draw_w = width - info_x - SAFETY_OFFSET - 40
     terminals_per_row = int(max_draw_w // FIXED_GAP)
     
     sheet_count = 1
-    y_start = height - 160 # Adjusted for top heading
-    y_curr = y_start
+    y_start, y_curr = height - 160, height - 160
     rows_on_page = 0
     
     draw_page_template(c, width, height, footer_values, sheet_count, main_heading)
     
-    rows = df.groupby('Row ID')
-    for rid, group in rows:
+    for rid, group in df.groupby('Row ID', sort=False):
         terms = group.to_dict('records')
         chunks = [terms[i:i + terminals_per_row] for i in range(0, len(terms), terminals_per_row)]
         
         for chunk in chunks:
-            # Page break logic: Restrict to 6 rows
             if rows_on_page >= 6:
                 c.showPage()
                 sheet_count += 1
                 draw_page_template(c, width, height, footer_values, sheet_count, main_heading)
-                y_curr = y_start
-                rows_on_page = 0
+                y_curr, rows_on_page = y_start, 0
             
             x_start = info_x + SAFETY_OFFSET + 20
-            c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid).upper())
+            c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid))
             
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * FIXED_GAP)
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
-                c.circle(tx, y_curr+40, 3, stroke=1, fill=1); c.circle(tx, y_curr, 3, stroke=1, fill=1)
+                c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
+            # Function and Cable Brackets
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
@@ -142,10 +139,10 @@ def process_drawing(df, fs, footer_values, main_heading):
                     c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
                     if is_h:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off-5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off-5)
-                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off+5); c.drawCentredString(mid_x, y_curr+y_off+10, txt)
+                        c.drawCentredString(mid_x, y_curr+y_off+10, txt)
                     else:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
-                        c.line(mid_x, y_curr+y_off, mid_x, y_curr+y_off-5); c.drawCentredString(mid_x, y_curr+y_off-15, txt)
+                        c.drawCentredString(mid_x, y_curr+y_off-15, txt)
             
             y_curr -= ROW_HEIGHT_SPACING
             rows_on_page += 1
@@ -153,47 +150,46 @@ def process_drawing(df, fs, footer_values, main_heading):
     c.save(); buffer.seek(0); return buffer
 
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="CTR Particular Generator", layout="wide")
+st.set_page_config(page_title="CTR Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
 with st.sidebar:
-    st.header("Project Details")
+    st.header("Settings")
     main_heading = st.text_input("Main Page Heading", "TERMINAL CHART / CTR PARTICULARS")
-    
-    with st.expander("📂 Footer Settings", expanded=False):
-        f_vals = [
-            st.text_input("Prepared by", "NOVALINE"), 
-            st.text_input("Checked by (1)", "SSE/SIG"), 
-            st.text_input("Checked by (2)", "ASTE/SIG"), 
-            st.text_input("Approved by", "DY.CSTE"), 
-            st.text_input("LB/CTR/RR No.", "CTR-01"), 
-            st.text_input("RR/Goomty No.", "G-05"), 
-            st.text_input("Station", "BAITARANI ROAD"), 
-            st.text_input("SIP Number", "SIP/BTRD/2025"), 
-            "AUTO"
-        ]
+    with st.expander("📂 Footer Details"):
+        f_vals = [st.text_input("Prep", "NOVALINE"), st.text_input("Chk1", "SSE/SIG"), 
+                  st.text_input("Chk2", "ASTE/SIG"), st.text_input("Appr", "DY.CSTE"), 
+                  st.text_input("CTR No", "CTR-01"), st.text_input("G-No", "G-05"), 
+                  st.text_input("Stn", "STATION NAME"), st.text_input("SIP", "SIP/2025"), "AUTO"]
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
 
-st.subheader("Data Upload")
 uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
 
 if uploaded_file:
-    stringio = io.StringIO(uploaded_file.getvalue().decode("utf-8"))
+    raw_text = uploaded_file.getvalue().decode("utf-8")
     all_parsed = []
-    for line in stringio:
+    for line in raw_text.splitlines():
         if line.strip():
             parsed = parse_fixed_format_multi_function(line.strip())
             if parsed: all_parsed.extend(parsed)
-    if all_parsed: st.session_state.df = pd.DataFrame(all_parsed)
+    
+    if all_parsed:
+        # Crucial fix: reset index and clear duplicates
+        new_df = pd.DataFrame(all_parsed).reset_index(drop=True)
+        st.session_state.df = new_df
+        
+        # DEBUG WINDOW
+        st.success(f"Parsed {len(new_df)} terminals.")
+        found_rows = new_df['Row ID'].unique()
+        st.write(f"**Rows Detected:** {', '.join(found_rows)}")
+        if "E" not in found_rows:
+            st.error("⚠️ Row 'E' was NOT detected. Please check Row E's formatting in your TXT file.")
 
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "DID HHG", "Cable Detail": "CABLE 1", "Terminal Number": "01"}])
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "N/A", "Terminal Number": "01"}])
 
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
 
 if st.button("🚀 Generate PDF Drawing"):
-    if not st.session_state.df.empty:
-        pdf = process_drawing(st.session_state.df, fs, f_vals, main_heading)
-        date_str = datetime.now().strftime("%d-%m-%Y")
-        file_name = f"{f_vals[4]}_{f_vals[6]}_{date_str}.pdf".replace(" ", "_")
-        st.download_button("⬇️ Download PDF Drawing", data=pdf, file_name=file_name)
+    pdf = process_drawing(st.session_state.df, fs, f_vals, main_heading)
+    st.download_button("⬇️ Download PDF", data=pdf, file_name="CTR_Drawing.pdf")
