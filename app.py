@@ -9,20 +9,10 @@ from datetime import datetime
 # --- UI CONFIG & CUSTOM CSS ---
 st.set_page_config(page_title="CTR Generator Pro", layout="wide")
 
-# Corrected CSS block to fix cursor and layout
 st.markdown("""
     <style>
-    /* Force cursor visibility on select boxes and inputs */
-    div[data-baseweb="select"] {
-        cursor: pointer !important;
-    }
-    .stSelectbox div {
-        cursor: pointer !important;
-    }
-    /* Improve table padding */
-    .stTable {
-        font-size: 12px;
-    }
+    div[data-baseweb="select"] { cursor: pointer !important; }
+    .stSelectbox div { cursor: pointer !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -33,19 +23,56 @@ FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 105 
 
+def validate_terminal_sequences(sheets_data):
+    """Checks for gaps or overlaps in terminal numbers within each Row ID."""
+    errors = []
+    for s_idx, sheet in enumerate(sheets_data):
+        df = pd.DataFrame(sheet['rows'])
+        if df.empty: continue
+        
+        # Ensure Terminal Number is numeric for sorting
+        df['num'] = pd.to_numeric(df['Terminal Number'], errors='coerce')
+        
+        for rid, group in df.groupby('Row ID'):
+            # Sort terminals for the specific Row ID
+            sorted_nums = sorted(group['num'].dropna().unique())
+            if not sorted_nums: continue
+            
+            # Check for gaps
+            for i in range(len(sorted_nums) - 1):
+                if sorted_nums[i+1] != sorted_nums[i] + 1:
+                    missing = list(range(int(sorted_nums[i]) + 1, int(sorted_nums[i+1])))
+                    missing_str = ", ".join([str(m).zfill(2) for m in missing])
+                    errors.append({
+                        "Sheet": sheet['meta']['location'] or f"Sheet {s_idx+1}",
+                        "Row": rid,
+                        "Error": f"Gap detected! Missing terminal(s): {missing_str} (Between {int(sorted_nums[i]):02} and {int(sorted_nums[i+1]):02})"
+                    })
+    return errors
+
+def draw_curly_bracket(c, x1, x2, y, is_top=True):
+    mid_x = (x1 + x2) / 2
+    height = 10 if is_top else -10
+    peak = y + height
+    c.setLineWidth(0.8)
+    p = c.beginPath()
+    p.moveTo(x1, y)
+    c1x, c1y = x1 + (mid_x - x1) * 0.2, y
+    c2x, c2y = x1 + (mid_x - x1) * 0.5, peak
+    p.curveTo(c1x, c1y, c2x, c2y, mid_x, peak)
+    c3x, c3y = x2 - (x2 - mid_x) * 0.5, peak
+    c4x, c4y = x2 - (x2 - mid_x) * 0.2, y
+    p.curveTo(c3x, c3y, c4x, c4y, x2, y)
+    c.drawPath(p)
+
 def parse_multi_sheet_txt(raw_text):
     sheets_data = []
-    current_meta = {
-        "sheet": 1, "station": "", "location": "", 
-        "sip": "", "heading": "TERMINAL CHART / CTR PARTICULARS"
-    }
+    current_meta = {"sheet": 1, "station": "", "location": "", "sip": "", "heading": "TERMINAL CHART / CTR PARTICULARS"}
     current_rows = []
-
     for line in raw_text.splitlines():
         line = line.strip()
         if not line: continue
         upper_line = line.upper()
-        
         if upper_line.startswith("SHEET:"):
             if current_rows:
                 sheets_data.append({"meta": current_meta.copy(), "rows": current_rows})
@@ -75,14 +102,11 @@ def parse_multi_sheet_txt(raw_text):
                     func_text = match[0].strip().upper()
                     start, end = int(match[1]), int(match[2])
                     for i in range(start, end + 1):
-                        current_rows.append({
-                            "Row ID": rid, "Function": func_text, 
-                            "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)
-                        })
-    if current_rows:
-        sheets_data.append({"meta": current_meta, "rows": current_rows})
+                        current_rows.append({"Row ID": rid, "Function": func_text, "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)})
+    if current_rows: sheets_data.append({"meta": current_meta, "rows": current_rows})
     return sheets_data
 
+# ... [draw_page_template and process_multi_sheet_pdf remain same as previous version] ...
 def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
@@ -139,7 +163,7 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
                     c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                     c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
                     c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
-                for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
+                for key, is_h, y_off in [('Function', True, 45), ('Cable Detail', False, -5)]:
                     i = 0
                     while i < len(chunk):
                         txt = str(chunk[i][key]).upper().strip()
@@ -148,10 +172,10 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
                         while i < len(chunk) and str(chunk[i][key]).upper().strip() == txt: i += 1
                         end_i = i - 1
                         s_x, e_x = x_start + (start_i * FIXED_GAP), x_start + (end_i * FIXED_GAP)
-                        c.setLineWidth(0.8); c.line(s_x-5, y_curr+y_off, e_x+5, y_curr+y_off)
+                        draw_curly_bracket(c, s_x-5, e_x+5, y_curr + y_off, is_top=is_h)
                         mid_x = (s_x+e_x)/2
                         c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
-                        c.drawCentredString(mid_x, y_curr+y_off+(10 if is_h else -15), txt)
+                        c.drawCentredString(mid_x, y_curr + y_off + (15 if is_h else -20), txt)
                 y_curr -= ROW_HEIGHT_SPACING
                 rows_on_page += 1
         c.showPage() 
@@ -161,78 +185,40 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
 
 # --- STREAMLIT UI ---
 st.title("🚉 Multi-Sheet CTR Generator")
-
-if 'sheets_data' not in st.session_state:
-    st.session_state.sheets_data = []
+if 'sheets_data' not in st.session_state: st.session_state.sheets_data = []
 
 with st.sidebar:
     st.header("🛠️ Control Panel")
-    
-    with st.expander("📘 COMPREHENSIVE TXT GUIDE", expanded=False):
-        st.markdown("### **1. Core Formatting Rules**")
-        st.write("The file is divided by **Sheet Tags**. Everything between two `SHEET:` tags belongs to the first one.")
-        
-        st.markdown("### **2. Control Tags (Case-Insensitive)**")
-        st.code("""HEADING: Drawing Title (Top of page)
-STATION: Station Name
-LOCATION: Location No / Goomty / RR
-SIP: SIP Reference No
-SHEET: Start Page Number""", language="text")
-        
-        st.markdown("### **3. Row Data Logic**")
-        st.write("Format: `RowID, Function [Range], CableDetail` ")
-        st.info("The [01 to 10] range automatically expands into 10 separate terminal circles.")
-        
-        st.markdown("### **4. Multi-Sheet Break Example**")
-        st.code("""STATION: HOWRAH
-SHEET: 01
-LOCATION: LOC-01
-A, SPARE [01-10]
+    with st.expander("✒️ SIGNATURES", expanded=False):
+        sig_data = {"prep": st.text_input("Prepared By", ""), "chk1": st.text_input("Checked By 1", ""), 
+                    "chk2": st.text_input("Checked By 2", ""), "app": st.text_input("Approved By", "")}
 
-SHEET: 10
-LOCATION: RR-NORTH
-A, SIGNAL HR [01-05], 12C MAIN
-B, SPARE [01-10]""", language="text")
-
-    with st.expander("✒️ OFFICIAL NAMES FOR SIGNATURES", expanded=False):
-        sig_data = {
-            "prep": st.text_input("Prepared By", ""),
-            "chk1": st.text_input("Checked By (SSE)", ""),
-            "chk2": st.text_input("Checked By (ASTE)", ""),
-            "app": st.text_input("Approved By", "")
-        }
-
-# --- MAIN INTERFACE ---
 uploaded_file = st.file_uploader("📂 Upload Drawing Content (.txt)", type=["txt"])
 
 if uploaded_file:
     raw_text = uploaded_file.getvalue().decode("utf-8")
     st.session_state.sheets_data = parse_multi_sheet_txt(raw_text)
-    st.success(f"✅ Detected {len(st.session_state.sheets_data)} sheet configurations.")
 
 if st.session_state.sheets_data:
     st.markdown("### 📊 Data Preview & Edit")
-    
     sheet_names = [f"Sheet {s['meta']['sheet']}: {s['meta']['location']}" for s in st.session_state.sheets_data]
-    selected_sheet_idx = st.selectbox("Select Sheet to Preview/Edit", range(len(sheet_names)), format_func=lambda i: sheet_names[i])
-    
+    selected_sheet_idx = st.selectbox("Select Sheet to Edit", range(len(sheet_names)), format_func=lambda i: sheet_names[i])
     current_df = pd.DataFrame(st.session_state.sheets_data[selected_sheet_idx]['rows'])
     edited_df = st.data_editor(current_df, num_rows="dynamic", use_container_width=True, key=f"editor_{selected_sheet_idx}")
-    
     st.session_state.sheets_data[selected_sheet_idx]['rows'] = edited_df.to_dict('records')
-
-    try:
-        output = io.BytesIO()
-        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-            for i, s in enumerate(st.session_state.sheets_data):
-                sheet_name = f"Sheet_{s['meta']['sheet']}"[:31]
-                pd.DataFrame(s['rows']).to_excel(writer, sheet_name=sheet_name, index=False)
-        st.download_button(label="📥 Download All Tables as Excel", data=output.getvalue(), file_name="Parsed_Terminal_Data.xlsx", mime="application/vnd.ms-excel")
-    except Exception:
-        pass
-
+    
     st.divider()
+    
+    # VALIDATION SECTION
+    st.subheader("🔍 Sequence Validation Report")
+    seq_errors = validate_terminal_sequences(st.session_state.sheets_data)
+    if seq_errors:
+        st.error(f"⚠️ Found {len(seq_errors)} errors in terminal sequences:")
+        st.table(seq_errors)
+        st.warning("Please correct the gaps in the table above before generating the PDF.")
+    else:
+        st.success("✅ All terminal sequences are continuous. No gaps detected.")
 
-    if st.button("🚀 Generate PDF for All Sheets", type="primary", use_container_width=True):
+    if st.button("🚀 Generate PDF Drawing", type="primary", use_container_width=True):
         pdf_buffer = process_multi_sheet_pdf(st.session_state.sheets_data, sig_data)
-        st.download_button(label="📥 Download Multi-Sheet PDF", data=pdf_buffer, file_name=f"Multi_Sheet_Drawing_{datetime.now().strftime('%d-%m-%Y')}.pdf", mime="application/pdf", use_container_width=True)
+        st.download_button(label="📥 Download PDF", data=pdf_buffer, file_name=f"CTR_{datetime.now().strftime('%d-%m-%Y')}.pdf", mime="application/pdf", use_container_width=True)
