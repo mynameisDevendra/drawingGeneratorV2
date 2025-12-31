@@ -84,7 +84,6 @@ def parse_multi_sheet_txt(raw_text):
     return sheets_data
 
 def validate_terminal_sequences(sheets_data):
-    """Validation logic with specified error format: Missing: Terminal number"""
     errors = []
     for s_idx, sheet in enumerate(sheets_data):
         df = pd.DataFrame(sheet['rows'])
@@ -99,24 +98,19 @@ def validate_terminal_sequences(sheets_data):
                         errors.append({
                             "Sheet/Location": sheet['meta']['location'] or f"Sheet {s_idx+1}", 
                             "Row": rid, 
-                            "Error": f"Terminal Missing: {str(m).zfill(2)}"
+                            "Error": f"Missing: {str(m).zfill(2)}"
                         })
     return errors
 
-def draw_curly_bracket(c, x1, x2, y, is_top=True):
-    mid_x = (x1 + x2) / 2
-    height = 10 if is_top else -10
-    peak = y + height
+def draw_group_line(c, x1, x2, y, is_top=True):
+    """Draws a professional straight line with vertical ticks at ends."""
     c.setLineWidth(0.8)
-    p = c.beginPath()
-    p.moveTo(x1, y)
-    c1x, c1y = x1 + (mid_x - x1) * 0.2, y
-    c2x, c2y = x1 + (mid_x - x1) * 0.5, peak
-    p.curveTo(c1x, c1y, c2x, c2y, mid_x, peak)
-    c3x, c3y = x2 - (x2 - mid_x) * 0.5, peak
-    c4x, c4y = x2 - (x2 - mid_x) * 0.2, y
-    p.curveTo(c3x, c3y, c4x, c4y, x2, y)
-    c.drawPath(p)
+    # Main Horizontal Line
+    c.line(x1, y, x2, y)
+    # End Ticks (small vertical lines)
+    tick_size = 5 if is_top else -5
+    c.line(x1, y, x1, y - tick_size)
+    c.line(x2, y, x2, y - tick_size)
 
 def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
     c.setLineWidth(1.5)
@@ -174,7 +168,9 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
                     c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                     c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
                     c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
-                for key, is_h, y_off in [('Function', True, 45), ('Cable Detail', False, -5)]:
+                
+                # Draw Function (Top) and Cable Detail (Bottom) with straight lines
+                for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                     i = 0
                     while i < len(chunk):
                         txt = str(chunk[i][key]).upper().strip()
@@ -182,9 +178,13 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
                         start_i, end_i = i, i
                         while i < len(chunk) and str(chunk[i][key]).upper().strip() == txt: end_i = i; i += 1
                         s_x, e_x = x_start + (start_i * FIXED_GAP), x_start + (end_i * FIXED_GAP)
-                        draw_curly_bracket(c, s_x-5, e_x+5, y_curr + y_off, is_top=is_h)
+                        
+                        # Draw straight line with ticks
+                        draw_group_line(c, s_x-5, e_x+5, y_curr + y_off, is_top=is_h)
+                        
                         c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
-                        c.drawCentredString((s_x+e_x)/2, y_curr + y_off + (15 if is_h else -20), txt)
+                        text_y = y_curr + y_off + (10 if is_h else -15)
+                        c.drawCentredString((s_x+e_x)/2, text_y, txt)
                 y_curr -= ROW_HEIGHT_SPACING
                 rows_on_page += 1
         c.showPage() 
@@ -211,12 +211,10 @@ if 'sheets_data' in st.session_state and st.session_state.sheets_data:
     sheet_names = [f"Sheet {s['meta']['sheet']}: {s['meta']['location']}" for s in st.session_state.sheets_data]
     sel_idx = st.selectbox("Select Sheet to Edit", range(len(sheet_names)), format_func=lambda i: sheet_names[i])
     
-    # Data Editor
     curr_rows = st.session_state.sheets_data[sel_idx]['rows']
     edited_df = st.data_editor(pd.DataFrame(curr_rows), num_rows="dynamic", use_container_width=True)
     st.session_state.sheets_data[sel_idx]['rows'] = edited_df.to_dict('records')
     
-    # Validation
     errs = validate_terminal_sequences(st.session_state.sheets_data)
     if errs: 
         st.error("⚠️ Sequence Gaps Detected!")
