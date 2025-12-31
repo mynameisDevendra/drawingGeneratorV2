@@ -69,7 +69,6 @@ def parse_multi_sheet_txt(raw_text):
             parts = [p.strip() for p in line.split(',')]
             if len(parts) >= 2:
                 rid, middle_part = parts[0].upper(), ",".join(parts[1:])
-                # Determine if last part is cable detail
                 last_part = parts[-1].upper()
                 term_keywords = ["SPARE", "RESERVED", "NI", "E3", "TERMINAL", "BLOCK", "LINK", "RESERVE"]
                 is_cable = not any(key in last_part for key in term_keywords)
@@ -83,6 +82,26 @@ def parse_multi_sheet_txt(raw_text):
                         current_rows.append({"Row ID": rid, "Function": func_text, "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)})
     if current_rows: sheets_data.append({"meta": current_meta, "rows": current_rows})
     return sheets_data
+
+def validate_terminal_sequences(sheets_data):
+    """Validation logic with specified error format: Missing: Terminal number"""
+    errors = []
+    for s_idx, sheet in enumerate(sheets_data):
+        df = pd.DataFrame(sheet['rows'])
+        if df.empty: continue
+        df['num'] = pd.to_numeric(df['Terminal Number'], errors='coerce')
+        for rid, group in df.groupby('Row ID'):
+            nums = sorted(group['num'].dropna().unique())
+            for i in range(len(nums) - 1):
+                if nums[i+1] != nums[i] + 1:
+                    missing_range = range(int(nums[i]) + 1, int(nums[i+1]))
+                    for m in missing_range:
+                        errors.append({
+                            "Sheet/Location": sheet['meta']['location'] or f"Sheet {s_idx+1}", 
+                            "Row": rid, 
+                            "Error": f"Missing: {str(m).zfill(2)}"
+                        })
+    return errors
 
 def draw_curly_bracket(c, x1, x2, y, is_top=True):
     mid_x = (x1 + x2) / 2
@@ -171,20 +190,6 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
         c.showPage() 
     c.save(); buffer.seek(0); return buffer
 
-def validate_terminal_sequences(sheets_data):
-    errors = []
-    for s_idx, sheet in enumerate(sheets_data):
-        df = pd.DataFrame(sheet['rows'])
-        if df.empty: continue
-        df['num'] = pd.to_numeric(df['Terminal Number'], errors='coerce')
-        for rid, group in df.groupby('Row ID'):
-            nums = sorted(group['num'].dropna().unique())
-            for i in range(len(nums) - 1):
-                if nums[i+1] != nums[i] + 1:
-                    missing = ", ".join([str(m).zfill(2) for m in range(int(nums[i])+1, int(nums[i+1]))])
-                    errors.append({"Sheet/Location": sheet['meta']['location'] or f"Sheet {s_idx+1}", "Row": rid, "Error": f"Missing: {missing}"})
-    return errors
-
 # --- UI LOGIC ---
 
 with st.sidebar:
@@ -213,9 +218,12 @@ if 'sheets_data' in st.session_state and st.session_state.sheets_data:
     
     # Validation
     errs = validate_terminal_sequences(st.session_state.sheets_data)
-    if errs: st.error("⚠️ Sequence Gaps Detected!"); st.table(errs)
-    else: st.success("✅ Sequences Continuous")
+    if errs: 
+        st.error("⚠️ Sequence Gaps Detected!")
+        st.table(errs)
+    else: 
+        st.success("✅ Sequences Continuous")
 
     if st.button("🚀 Generate PDF Drawing", type="primary", use_container_width=True):
         pdf = process_multi_sheet_pdf(st.session_state.sheets_data, sig_data)
-        st.download_button("📥 Download PDF", pdf, "Drawing.pdf", "application/pdf", use_container_width=True)
+        st.download_button("📥 Download PDF", pdf, f"CTR_{datetime.now().strftime('%d%m%Y')}.pdf", "application/pdf", use_container_width=True)
