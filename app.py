@@ -23,7 +23,6 @@ FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 105 
 
-# Updated Sample Content with KUR
 SAMPLE_CONTENT = """HEADING: SAMPLE TERMINAL CHART
 STATION: KUR
 SIP: SIP/KUR/2025/01
@@ -138,19 +137,19 @@ def draw_page_template(c, width, height, footer_values, sheet_num, page_heading)
         x_end = dividers[i]
         x_c = (x_start + x_end) / 2
         
-        # 1. FIXED LABELS AT TOP
+        # 1. TOP LABELS (Fixed Headers) - Font 9.0 Bold
         c.setFont("Helvetica-Bold", 9.0)
         c.drawCentredString(x_c, footer_y - 12, headers[i])
         
-        # 2. VALUES MAPPING
+        # 2. DATA VALUES MAPPING
         val = f"{sheet_num:02}" if i == 7 else str(footer_values[i])
         
         # PLACEMENT LOGIC
-        if i in [4, 5, 6, 7]: # Location, Station, SIP, AND Sheet No go in MIDDLE
-            c.setFont("Helvetica", 8.0)
+        if i in [4, 5, 6, 7]: # Location, Station, SIP, Sheet No go in MIDDLE
+            c.setFont("Helvetica-Bold", 9.0) # Bolded as requested
             c.drawCentredString(x_c, PAGE_MARGIN + 30, val.upper())
-        else: # Designation Names (Prepared/Checked/Approved) go at BOTTOM
-            c.setFont("Helvetica", 8.0)
+        else: # Designations (Names) go at BOTTOM - Font 9.0 Bold
+            c.setFont("Helvetica-Bold", 9.0) 
             c.drawCentredString(x_c, PAGE_MARGIN + 5, val.upper())
             
     return info_x
@@ -159,7 +158,15 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
-    fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
+    
+    # Text/Terminal Detail Font Sizes
+    fs = {
+        'head': 10.0,    # Function Name (Top)
+        'foot': 9.5,     # Cable Detail (Bottom)
+        'term': 8.5,     # Terminal Number (Inside circle)
+        'row': 12.0      # Row ID (A, B, C...)
+    }
+    
     for sheet in sheets_list:
         meta = sheet['meta']
         df = pd.DataFrame(sheet['rows'])
@@ -185,6 +192,7 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
                 
                 x_start = info_x + SAFETY_OFFSET + 20
                 c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid))
+                
                 for idx, t in enumerate(chunk):
                     tx = x_start + (idx * FIXED_GAP)
                     c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
@@ -200,8 +208,11 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
                         while i < len(chunk) and str(chunk[i][key]).upper().strip() == txt: end_i = i; i += 1
                         s_x, e_x = x_start + (start_i * FIXED_GAP), x_start + (end_i * FIXED_GAP)
                         draw_group_line(c, s_x-5, e_x+5, y_curr + y_off, is_top=is_h)
+                        
                         c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
-                        c.drawCentredString((s_x+e_x)/2, y_curr + y_off + (10 if is_h else -15), txt)
+                        text_y = y_curr + y_off + (12 if is_h else -20)
+                        c.drawCentredString((s_x+e_x)/2, text_y, txt)
+                        
                 y_curr -= ROW_HEIGHT_SPACING
                 rows_on_page += 1
         c.showPage() 
@@ -211,7 +222,6 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
 
 with st.sidebar:
     st.header("📂 Resources")
-    # Sample file with KUR
     st.download_button("📥 Download Sample TXT", SAMPLE_CONTENT, "sample_ctr_KUR.txt", "text/plain", use_container_width=True)
     st.divider()
     with st.expander("✒️ Signature Names", expanded=False):
