@@ -4,7 +4,6 @@ from reportlab.pdfgen import canvas
 from reportlab.lib.pagesizes import A3, landscape
 import re
 import io
-import zipfile
 from datetime import datetime
 
 # --- LAYOUT CONSTANTS ---
@@ -15,6 +14,7 @@ PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 105 
 
 def parse_fixed_format_multi_function(text):
+    """Refined Parser: Distinguishes between Terminal Details and Cable Details."""
     new_rows = []
     try:
         parts = [p.strip() for p in text.split(',')]
@@ -46,7 +46,7 @@ def parse_fixed_format_multi_function(text):
     except Exception:
         return None
 
-def draw_page_template(c, width, height, footer_values, current_page, page_heading):
+def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
     c.setFont("Helvetica-Bold", 16)
@@ -64,18 +64,14 @@ def draw_page_template(c, width, height, footer_values, current_page, page_headi
     dividers = [info_x + (i * box_w) for i in range(9)] 
     for x in dividers[:-1]: c.line(x, PAGE_MARGIN, x, footer_y)
 
-    # REPLACED SHEET NO with SHEET NAME
-    headers = ["PREPARED BY", "CHECKED BY", "CHECKED BY", "APPROVED BY", "SHEET NAME", "RR/GOOMTY NO.", "STATION", "SIP", "PAGE NO."]
+    headers = ["PREPARED BY", "CHECKED BY", "CHECKED BY", "APPROVED BY", "LB/CTR/RR NO.", "RR/GOOMTY NO.", "STATION", "SIP", "SHEET NO."]
     for i in range(9):
         x_start = PAGE_MARGIN if i == 0 else dividers[i-1]
         x_end = dividers[i]
         x_c = (x_start + x_end) / 2
         c.setFont("Helvetica-Bold", 4.5); c.drawCentredString(x_c, footer_y - 12, headers[i])
         c.setFont("Helvetica", 6.5)
-        
-        # Logic for Page No vs Footer values
-        val = f"{current_page:02}" if i == 8 else str(footer_values[i])
-        
+        val = f"{sheet_num:03}" if i == 8 else str(footer_values[i])
         lines = val.upper().split('\n')
         for idx, line in enumerate(lines):
             c.drawCentredString(x_c, footer_y - 25 - (idx * 10), line)
@@ -93,11 +89,11 @@ def process_drawing(df, fs, footer_values, page_heading):
     max_draw_w = width - info_x - SAFETY_OFFSET - 40
     terminals_per_row = int(max_draw_w // FIXED_GAP)
     
-    current_page = 1
+    sheet_count = 1
     y_start, y_curr = height - 160, height - 160
     rows_on_page = 0
     
-    draw_page_template(c, width, height, footer_values, current_page, page_heading)
+    draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
     
     for rid, group in df.groupby('Row ID', sort=False):
         terms = group.to_dict('records')
@@ -105,19 +101,16 @@ def process_drawing(df, fs, footer_values, page_heading):
         for chunk in chunks:
             if rows_on_page >= 6:
                 c.showPage()
-                current_page += 1
-                draw_page_template(c, width, height, footer_values, current_page, page_heading)
+                sheet_count += 1
+                draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
                 y_curr, rows_on_page = y_start, 0
-            
             x_start = info_x + SAFETY_OFFSET + 20
             c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid))
-            
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * FIXED_GAP)
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                 c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
-            
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
@@ -135,64 +128,78 @@ def process_drawing(df, fs, footer_values, page_heading):
                     else:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
                         c.drawCentredString(mid_x, y_curr+y_off-15, txt)
-            
             y_curr -= ROW_HEIGHT_SPACING
             rows_on_page += 1
-            
-    c.save(); buffer.seek(0); return buffer, current_page
+    c.save(); buffer.seek(0); return buffer, sheet_count
 
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="Batch CTR Generator", layout="wide")
-st.title("🚉 Batch Generator: Sheet Name Mode")
+st.set_page_config(page_title="CTR Generator", layout="wide")
+st.title("🚉 CTR Particular Generator")
 
 with st.sidebar:
-    st.header("⚙️ Global Settings")
+    with st.expander("📘 USER MANUAL & INTERFACE GUIDE", expanded=False):
+        st.markdown("### 1. Data Import Protocol")
+        st.info("Input `.txt` files must follow the structural format below:")
+        st.code("RowID, Function [Start to End], CableDetail")
+        
+    st.divider()
+    st.header("⚙️ Page Setting")
     page_heading = st.text_input("Page Heading", "TERMINAL CHART / CTR PARTICULARS")
     
-    with st.expander("📂 Batch Footer Details", expanded=True):
+    with st.expander("📂 Footer Details", expanded=False):
         prep_by = st.text_input("Prepared By", "NOVALINE")
         chk_by1 = st.text_input("Checked By 1", "SSE/SIG")
         chk_by2 = st.text_input("Checked By 2", "ASTE/SIG")
         app_by = st.text_input("Approved By", "DY.CSTE")
+        lb_no = st.text_input("LB/CTR/RR No", "CTR-01")
+        goomty_no = st.text_input("Goomty No", "G-05")
+        station = st.text_input("Station", "STATION NAME")
         sip_no = st.text_input("SIP No", "SIP/2025")
+        
+        f_vals = [prep_by, chk_by1, chk_by2, app_by, lb_no, goomty_no, station, sip_no, "AUTO"]
     
-    st.info("💡 **Filename Extraction:**\n`STATION_SHEET-NAME_GOOMTY.txt`")
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
 
-uploaded_files = st.file_uploader("Upload .txt files", type=["txt"], accept_multiple_files=True)
+uploaded_file = st.file_uploader("Upload .txt file for Terminal Content", type=["txt"])
 
-if uploaded_files:
-    if st.button("🚀 Generate ZIP Archive"):
-        zip_buffer = io.BytesIO()
+if uploaded_file:
+    raw_text = uploaded_file.getvalue().decode("utf-8")
+    all_parsed = []
+    for line in raw_text.splitlines():
+        if line.strip():
+            parsed = parse_fixed_format_multi_function(line.strip())
+            if parsed: all_parsed.extend(parsed)
+    if all_parsed:
+        st.session_state.df = pd.DataFrame(all_parsed).reset_index(drop=True)
+        st.success(f"Successfully loaded {len(st.session_state.df)} terminals.")
+
+if 'df' not in st.session_state:
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "30C RR TO GOOMTY-01", "Terminal Number": "01"}])
+
+st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
+
+if st.button("🚀 Generate PDF Drawing"):
+    if not st.session_state.df.empty:
+        # process_drawing now returns total sheets too
+        pdf_buffer, total_sheets = process_drawing(st.session_state.df, fs, f_vals, page_heading)
+        
+        # --- DYNAMIC FILENAME LOGIC ---
+        # Get current date
         current_date = datetime.now().strftime("%d-%m-%Y")
         
-        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
-            for uploaded_file in uploaded_files:
-                # 1. Filename Parsing (Station_SheetName_Goomty)
-                fname = uploaded_file.name.replace(".txt", "")
-                parts = fname.split("_")
-                stn = parts[0] if len(parts) > 0 else "STATION"
-                sheet_name = parts[1] if len(parts) > 1 else "LB-XX"
-                goomty = parts[2] if len(parts) > 2 else "G-XX"
-                
-                # 2. Footer Assembly (Index 4 is now Sheet Name)
-                f_vals = [prep_by, chk_by1, chk_by2, app_by, sheet_name, goomty, stn, sip_no, "AUTO"]
+        # Format: RR-GOOMTY-LOCATION BOX_STATION_SHEET NUMBER_DATE.PDF
+        # Sanitizing '/' to '-' to prevent file path errors
+        clean_rr = goomty_no.replace("/", "-")
+        clean_lb = lb_no.replace("/", "-")
+        clean_stn = station.replace("/", "-")
+        
+        dynamic_name = f"{clean_rr}_{clean_lb}_{clean_stn}_SHEET-{total_sheets:02}_{current_date}.pdf"
+        
+        st.download_button(
+            label="⬇️ Download PDF Drawing",
+            data=pdf_buffer,
+            file_name=dynamic_name,
+            mime="application/pdf"
+        )
+        st.info(f"Filename: {dynamic_name}")
 
-                # 3. Data Processing
-                raw_text = uploaded_file.getvalue().decode("utf-8")
-                all_parsed = []
-                for line in raw_text.splitlines():
-                    if line.strip():
-                        parsed = parse_fixed_format_multi_function(line.strip())
-                        if parsed: all_parsed.extend(parsed)
-                
-                if all_parsed:
-                    df = pd.DataFrame(all_parsed)
-                    pdf_content, total_pages = process_drawing(df, fs, f_vals, page_heading)
-                    
-                    # 4. ZIP Naming
-                    dynamic_name = f"{goomty}_{sheet_name}_{stn}_PAGES-{total_pages:02}_{current_date}.pdf"
-                    zip_file.writestr(dynamic_name, pdf_content.getvalue())
-
-        zip_buffer.seek(0)
-        st.download_button("📥 Download Batch ZIP", data=zip_buffer, file_name=f"CTR_Batch_{current_date}.zip")
