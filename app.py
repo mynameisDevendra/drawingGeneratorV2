@@ -11,7 +11,7 @@ PAGE_MARGIN = 20
 SAFETY_OFFSET = 42.5
 FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
-ROW_HEIGHT_SPACING = 105 
+ROW_HEIGHT_SPACING = 140 # Increased spacing to accommodate larger symbols
 
 def parse_fixed_format_multi_function(text):
     """Refined Parser: Distinguishes between Terminal Details and Cable Details."""
@@ -20,7 +20,6 @@ def parse_fixed_format_multi_function(text):
         parts = [p.strip() for p in text.split(',')]
         if len(parts) < 2: return None
         rid = parts[0].upper()
-        
         term_keywords = ["SPARE", "RESERVED", "NI", "E3", "TERMINAL", "BLOCK", "LINK", "RESERVE"]
         last_part = parts[-1].upper()
         is_cable = not any(key in last_part for key in term_keywords)
@@ -47,39 +46,42 @@ def parse_fixed_format_multi_function(text):
     except Exception:
         return None
 
-# --- SYMBOL DRAWING FUNCTIONS ---
+# --- SYMBOL DRAWING FUNCTIONS (4X SIZE) ---
 
 def draw_relay_symbol(c, x, y):
-    """Draws a Relay box with a diagonal line."""
-    c.setLineWidth(1)
-    c.rect(x - 12, y + 45, 24, 24, stroke=1, fill=0)
-    c.line(x - 12, y + 45, x + 12, y + 69)
-    c.setFont("Helvetica-Bold", 5)
-    c.drawCentredString(x, y + 55, "RELAY")
+    """Draws a Relay box at 4x the original size (96x96)."""
+    c.setLineWidth(1.2)
+    # Original was rect(x-12, y+45, 24, 24). New is 4x.
+    c.rect(x - 48, y + 45, 96, 96, stroke=1, fill=0)
+    c.line(x - 48, y + 45, x + 48, y + 141) # Diagonal line
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(x, y + 90, "RELAY")
+
+
 
 def draw_charger_symbol(c, x, y):
-    """Draws a Battery Charger symbol."""
-    c.setLineWidth(1)
-    c.rect(x - 14, y + 45, 28, 20, stroke=1, fill=0)
-    c.line(x - 14, y + 55, x + 14, y + 55) # Horizontal divider
-    c.setFont("Helvetica-Bold", 5)
-    c.drawCentredString(x, y + 60, "CHGR")
-    c.drawCentredString(x, y + 48, "DC OUT")
+    """Draws a Battery Charger symbol at 4x size."""
+    c.setLineWidth(1.2)
+    c.rect(x - 56, y + 45, 112, 80, stroke=1, fill=0)
+    c.line(x - 56, y + 85, x + 56, y + 85) # Divider
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(x, y + 105, "CHGR")
+    c.drawCentredString(x, y + 60, "DC OUT")
 
 
 
 def draw_fuse_symbol(c, x, y):
-    """Draws a Fuse Block symbol."""
-    c.setLineWidth(1)
-    # Standard S-shape fuse line inside a small rectangle
-    c.rect(x - 8, y + 45, 16, 25, stroke=1, fill=0)
-    c.bezier(x-4, y+50, x+8, y+55, x-8, y+60, x+4, y+65)
-    c.setFont("Helvetica-Bold", 5)
-    c.drawCentredString(x, y + 72, "FUSE")
+    """Draws a Fuse Block symbol at 4x size."""
+    c.setLineWidth(1.2)
+    c.rect(x - 32, y + 45, 64, 100, stroke=1, fill=0)
+    # Scaled Bezier curve
+    c.bezier(x-16, y+65, x+32, y+85, x-32, y+105, x+16, y+125)
+    c.setFont("Helvetica-Bold", 10)
+    c.drawCentredString(x, y + 155, "FUSE")
 
 
 
-#[Image of an electrical fuse symbol]
+[Image of an electrical fuse symbol]
 
 
 def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
@@ -126,7 +128,7 @@ def process_drawing(df, fs, footer_values, page_heading):
     terminals_per_row = int(max_draw_w // FIXED_GAP)
     
     sheet_count = 1
-    y_start, y_curr = height - 160, height - 160
+    y_start, y_curr = height - 180, height - 180 # Adjusted for large symbols
     rows_on_page = 0
     
     draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
@@ -135,7 +137,7 @@ def process_drawing(df, fs, footer_values, page_heading):
         terms = group.to_dict('records')
         chunks = [terms[i:i + terminals_per_row] for i in range(0, len(terms), terminals_per_row)]
         for chunk in chunks:
-            if rows_on_page >= 6:
+            if rows_on_page >= 5: # Reduced to 5 rows to ensure 4x symbols fit
                 c.showPage()
                 sheet_count += 1
                 draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
@@ -146,21 +148,26 @@ def process_drawing(df, fs, footer_values, page_heading):
             
             for idx, t in enumerate(chunk):
                 tx = x_start + (idx * FIXED_GAP)
-                c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
-                c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
-                c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
-                
-                # SYMBOL DETECTION LOGIC
                 func_name = str(t['Function']).upper()
+                
+                # MUTUALLY EXCLUSIVE DRAWING: Symbol OR Pin
                 if "RELAY" in func_name:
                     draw_relay_symbol(c, tx, y_curr)
                 elif "CHGR" in func_name:
                     draw_charger_symbol(c, tx, y_curr)
                 elif "FUSE" in func_name:
                     draw_fuse_symbol(c, tx, y_curr)
+                else:
+                    c.setLineWidth(1)
+                    c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
+                    c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
+                
+                # Always draw terminal number
+                c.setFont("Helvetica-Bold", fs['term'])
+                c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
-            # Grouping Brackets
-            for key, is_h, y_off in [('Function', True, 75.0), ('Cable Detail', False, -13.5)]:
+            # Grouping Brackets (Increased top offset to 160 for 4x symbols)
+            for key, is_h, y_off in [('Function', True, 160.0), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
                     txt = str(chunk[i][key]).upper().strip()
@@ -188,11 +195,9 @@ st.title("🚉 CTR Particular Generator")
 with st.sidebar:
     with st.expander("📘 USER MANUAL", expanded=False):
         st.markdown("### Symbol Triggers")
-        st.write("- **RELAY:** Draw a relay box.")
-        st.write("- **CHGR:** Draw a battery charger.")
-        st.write("- **FUSE:** Draw a fuse block.")
-        st.markdown("### TXT Protocol")
-        st.code("RowID, Function [Start to End], CableDetail")
+        st.write("- **RELAY:** Large component box.")
+        st.write("- **CHGR:** Battery charger block.")
+        st.write("- **FUSE:** Fuse block symbol.")
 
     st.divider()
     st.header("⚙️ Page Setting")
@@ -215,7 +220,7 @@ if uploaded_file:
     if all_parsed: st.session_state.df = pd.DataFrame(all_parsed).reset_index(drop=True)
 
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "FUSE 110V", "Cable Detail": "IPS CABLE", "Terminal Number": "01"}])
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "RELAY", "Cable Detail": "N/A", "Terminal Number": "01"}])
 
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
 
