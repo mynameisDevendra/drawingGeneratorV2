@@ -23,8 +23,9 @@ FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 105 
 
+# Updated Sample Content with KUR
 SAMPLE_CONTENT = """HEADING: SAMPLE TERMINAL CHART
-STATION: NEW DELHI
+STATION: KUR
 SIP: SIP/KUR/2025/01
 
 SHEET: 01
@@ -137,14 +138,21 @@ def draw_page_template(c, width, height, footer_values, sheet_num, page_heading)
         x_end = dividers[i]
         x_c = (x_start + x_end) / 2
         
-        # 1. FIXED HEADER (e.g. PREPARED BY) - AT TOP OF BOX
+        # 1. FIXED LABELS AT TOP
         c.setFont("Helvetica-Bold", 9.0)
-        c.drawCentredString(x_c, footer_y - 15, headers[i])
+        c.drawCentredString(x_c, footer_y - 12, headers[i])
         
-        # 2. USER INPUT (e.g. JE/SIG) - AT BOTTOM OF BOX
-        c.setFont("Helvetica", 8.0)
+        # 2. VALUES MAPPING
         val = f"{sheet_num:02}" if i == 7 else str(footer_values[i])
-        c.drawCentredString(x_c, PAGE_MARGIN + 15, val.upper())
+        
+        # PLACEMENT LOGIC
+        if i in [4, 5, 6, 7]: # Location, Station, SIP, AND Sheet No go in MIDDLE
+            c.setFont("Helvetica", 8.0)
+            c.drawCentredString(x_c, PAGE_MARGIN + 30, val.upper())
+        else: # Designation Names (Prepared/Checked/Approved) go at BOTTOM
+            c.setFont("Helvetica", 8.0)
+            c.drawCentredString(x_c, PAGE_MARGIN + 5, val.upper())
+            
     return info_x
 
 def process_multi_sheet_pdf(sheets_list, sig_data):
@@ -203,13 +211,15 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
 
 with st.sidebar:
     st.header("📂 Resources")
-    st.download_button("📥 Download Sample TXT", SAMPLE_CONTENT, "sample_ctr.txt", "text/plain", use_container_width=True)
+    # Sample file with KUR
+    st.download_button("📥 Download Sample TXT", SAMPLE_CONTENT, "sample_ctr_KUR.txt", "text/plain", use_container_width=True)
     st.divider()
     with st.expander("✒️ Signature Names", expanded=False):
         sig_data = {"prep": st.text_input("Name/Desig (Prepared)", "JE/SIG"), "chk1": st.text_input("Name/Desig (SSE)", "SSE/SIG"), 
                     "chk2": st.text_input("Name/Desig (ASTE)", "ASTE"), "app": st.text_input("Name/Desig (DSTE)", "DSTE")}
 
 st.title("🚉 Multi-Sheet CTR Generator")
+
 
 uploaded_file = st.file_uploader("📂 Upload Drawing Content (.txt)", type=["txt"])
 
