@@ -14,30 +14,32 @@ PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 105 
 
 def parse_fixed_format_multi_function(text):
-    """Enhanced Parser to prevent skipping rows like Row E."""
+    """Refined Parser: Distinguishes between Terminal Details and Cable Details."""
     new_rows = []
     try:
-        # Split by first and last comma to isolate Row ID and Cable Detail
-        parts = text.split(',')
+        parts = [p.strip() for p in text.split(',')]
         if len(parts) < 2: return None
         
-        rid = parts[0].strip().upper()
+        rid = parts[0].upper()
         
-        # Cable detail is usually the last part
-        cable_detail = parts[-1].strip().upper()
+        # KEYWORDS that should NEVER be treated as a Cable Detail
+        term_keywords = ["SPARE", "RESERVED", "NI", "E3", "TERMINAL", "BLOCK", "LINK", "RESERVE"]
         
-        # Middle part contains the functions and ranges
-        middle_part = ",".join(parts[1:-1]).strip()
-        if not middle_part: # Handle case where there might only be 2 parts
-             middle_part = parts[1].strip()
+        last_part = parts[-1].upper()
         
-        # Pattern to find: Function [Start to End]
+        # Logic: If the last part contains a terminal keyword, it's not a cable.
+        is_cable = not any(key in last_part for key in term_keywords)
+        
+        if is_cable and len(parts) >= 3:
+            cable_detail = last_part
+            middle_part = ",".join(parts[1:-1])
+        else:
+            cable_detail = "" 
+            middle_part = ",".join(parts[1:])
+            
         pattern = r'([^,\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]'
         matches = re.findall(pattern, middle_part, re.I)
         
-        if not matches:
-            return None
-
         for match in matches:
             func_text = match[0].strip().upper()
             start, end = int(match[1]), int(match[2])
@@ -49,14 +51,14 @@ def parse_fixed_format_multi_function(text):
                     "Terminal Number": str(i).zfill(2)
                 })
         return new_rows
-    except Exception as e:
+    except Exception:
         return None
 
-def draw_page_template(c, width, height, footer_values, sheet_num, main_heading):
+def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
     c.setFont("Helvetica-Bold", 16)
-    c.drawCentredString(width / 2, height - 60, main_heading.upper())
+    c.drawCentredString(width / 2, height - 60, page_heading.upper())
     
     footer_y = PAGE_MARGIN + 60
     c.line(PAGE_MARGIN, footer_y, width - PAGE_MARGIN, footer_y)
@@ -83,12 +85,11 @@ def draw_page_template(c, width, height, footer_values, sheet_num, main_heading)
             c.drawCentredString(x_c, footer_y - 25 - (idx * 10), line)
     return info_x
 
-def process_drawing(df, fs, footer_values, main_heading):
+def process_drawing(df, fs, footer_values, page_heading):
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
     
-    # Sort data correctly
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
     
@@ -100,7 +101,7 @@ def process_drawing(df, fs, footer_values, main_heading):
     y_start, y_curr = height - 160, height - 160
     rows_on_page = 0
     
-    draw_page_template(c, width, height, footer_values, sheet_count, main_heading)
+    draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
     
     for rid, group in df.groupby('Row ID', sort=False):
         terms = group.to_dict('records')
@@ -110,7 +111,7 @@ def process_drawing(df, fs, footer_values, main_heading):
             if rows_on_page >= 6:
                 c.showPage()
                 sheet_count += 1
-                draw_page_template(c, width, height, footer_values, sheet_count, main_heading)
+                draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
                 y_curr, rows_on_page = y_start, 0
             
             x_start = info_x + SAFETY_OFFSET + 20
@@ -122,7 +123,6 @@ def process_drawing(df, fs, footer_values, main_heading):
                 c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
             
-            # Function and Cable Brackets
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
@@ -153,17 +153,46 @@ def process_drawing(df, fs, footer_values, main_heading):
 st.set_page_config(page_title="CTR Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
+# --- LEFT SIDEBAR: INSTRUCTIONS & SETTINGS ---
 with st.sidebar:
-    st.header("Settings")
-    main_heading = st.text_input("Main Page Heading", "TERMINAL CHART / CTR PARTICULARS")
+    # 1. INSTRUCTIONS BUTTON / SECTION
+    with st.expander("ℹ️ Instructions: How to Use", expanded=True):
+        st.markdown("""
+        **Step 1: Prepare TXT File**
+        Follow this specific format in Notepad:
+        `Row ID, Function [Start to End], Cable Detail`
+        
+        **Examples:**
+        * `A, POINT 101 [1 to 4], 12C SIGNAL CABLE`
+        * `B, SPARE [5 to 10]` *(No cable needed)*
+        * `C, NI LINK [1 to 2], SPARE` *(Identifies SPARE as a terminal state, not a cable)*
+        
+        **Step 2: Upload & Review**
+        Upload the file. Review detected rows in the table.
+        
+        **Step 3: Page Setting**
+        Adjust the Page Heading and Footer details below.
+        
+        **Step 4: Generate**
+        Download the A3 PDF (max 6 rows per page).
+        """)
+
+    st.divider()
+    
+    # 2. PAGE SETTINGS
+    st.header("⚙️ Page Setting")
+    page_heading = st.text_input("Page Heading", "TERMINAL CHART / CTR PARTICULARS")
+    
     with st.expander("📂 Footer Details"):
-        f_vals = [st.text_input("Prep", "NOVALINE"), st.text_input("Chk1", "SSE/SIG"), 
-                  st.text_input("Chk2", "ASTE/SIG"), st.text_input("Appr", "DY.CSTE"), 
-                  st.text_input("CTR No", "CTR-01"), st.text_input("G-No", "G-05"), 
-                  st.text_input("Stn", "STATION NAME"), st.text_input("SIP", "SIP/2025"), "AUTO"]
+        f_vals = [st.text_input("Prepared By", "NOVALINE"), st.text_input("Checked By 1", "SSE/SIG"), 
+                  st.text_input("Checked By 2", "ASTE/SIG"), st.text_input("Approved By", "DY.CSTE"), 
+                  st.text_input("LB/CTR/RR No", "CTR-01"), st.text_input("Goomty No", "G-05"), 
+                  st.text_input("Station", "STATION NAME"), st.text_input("SIP No", "SIP/2025"), "AUTO"]
+    
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
 
-uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
+# --- MAIN CONTENT ---
+uploaded_file = st.file_uploader("Upload .txt file for Terminal Content", type=["txt"])
 
 if uploaded_file:
     raw_text = uploaded_file.getvalue().decode("utf-8")
@@ -174,22 +203,15 @@ if uploaded_file:
             if parsed: all_parsed.extend(parsed)
     
     if all_parsed:
-        # Crucial fix: reset index and clear duplicates
-        new_df = pd.DataFrame(all_parsed).reset_index(drop=True)
-        st.session_state.df = new_df
-        
-        # DEBUG WINDOW
-        st.success(f"Parsed {len(new_df)} terminals.")
-        found_rows = new_df['Row ID'].unique()
-        st.write(f"**Rows Detected:** {', '.join(found_rows)}")
-        if "E" not in found_rows:
-            st.error("⚠️ Row 'E' was NOT detected. Please check Row E's formatting in your TXT file.")
+        st.session_state.df = pd.DataFrame(all_parsed).reset_index(drop=True)
+        st.success(f"Successfully loaded {len(st.session_state.df)} terminals.")
 
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "N/A", "Terminal Number": "01"}])
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "", "Terminal Number": "01"}])
 
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
 
 if st.button("🚀 Generate PDF Drawing"):
-    pdf = process_drawing(st.session_state.df, fs, f_vals, main_heading)
-    st.download_button("⬇️ Download PDF", data=pdf, file_name="CTR_Drawing.pdf")
+    if not st.session_state.df.empty:
+        pdf = process_drawing(st.session_state.df, fs, f_vals, page_heading)
+        st.download_button("⬇️ Download PDF Drawing", data=pdf, file_name="CTR_Particulars.pdf")
