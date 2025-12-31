@@ -16,6 +16,15 @@ ROW_HEIGHT_SPACING = 105
 def parse_fixed_format_multi_function(text):
     """Refined Parser: Distinguishes between Terminal Details and Cable Details."""
     new_rows = []
+    # Check if the line defines the starting sheet number
+    if text.upper().startswith("SHEET:"):
+        try:
+            val = re.search(r'\d+', text)
+            if val:
+                return "SHEET_SET", int(val.group())
+        except: pass
+        return None
+
     try:
         parts = [p.strip() for p in text.split(',')]
         if len(parts) < 2: return None
@@ -42,7 +51,7 @@ def parse_fixed_format_multi_function(text):
                     "Row ID": rid, "Function": func_text, 
                     "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)
                 })
-        return new_rows
+        return "DATA", new_rows
     except Exception:
         return None
 
@@ -71,13 +80,14 @@ def draw_page_template(c, width, height, footer_values, sheet_num, page_heading)
         x_c = (x_start + x_end) / 2
         c.setFont("Helvetica-Bold", 4.5); c.drawCentredString(x_c, footer_y - 12, headers[i])
         c.setFont("Helvetica", 6.5)
-        val = f"{sheet_num:03}" if i == 8 else str(footer_values[i])
+        
+        val = f"{sheet_num:02}" if i == 8 else str(footer_values[i])
         lines = val.upper().split('\n')
         for idx, line in enumerate(lines):
             c.drawCentredString(x_c, footer_y - 25 - (idx * 10), line)
     return info_x
 
-def process_drawing(df, fs, footer_values, page_heading):
+def process_drawing(df, fs, footer_values, page_heading, start_sheet_no):
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
@@ -89,11 +99,11 @@ def process_drawing(df, fs, footer_values, page_heading):
     max_draw_w = width - info_x - SAFETY_OFFSET - 40
     terminals_per_row = int(max_draw_w // FIXED_GAP)
     
-    sheet_count = 1
+    current_sheet_val = start_sheet_no
     y_start, y_curr = height - 160, height - 160
     rows_on_page = 0
     
-    draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
+    draw_page_template(c, width, height, footer_values, current_sheet_val, page_heading)
     
     for rid, group in df.groupby('Row ID', sort=False):
         terms = group.to_dict('records')
@@ -101,9 +111,10 @@ def process_drawing(df, fs, footer_values, page_heading):
         for chunk in chunks:
             if rows_on_page >= 6:
                 c.showPage()
-                sheet_count += 1
-                draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
+                current_sheet_val += 1 
+                draw_page_template(c, width, height, footer_values, current_sheet_val, page_heading)
                 y_curr, rows_on_page = y_start, 0
+            
             x_start = info_x + SAFETY_OFFSET + 20
             c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid))
             for idx, t in enumerate(chunk):
@@ -111,6 +122,7 @@ def process_drawing(df, fs, footer_values, page_heading):
                 c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
                 c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
                 c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
+            
             for key, is_h, y_off in [('Function', True, 53.5), ('Cable Detail', False, -13.5)]:
                 i = 0
                 while i < len(chunk):
@@ -130,17 +142,30 @@ def process_drawing(df, fs, footer_values, page_heading):
                         c.drawCentredString(mid_x, y_curr+y_off-15, txt)
             y_curr -= ROW_HEIGHT_SPACING
             rows_on_page += 1
-    c.save(); buffer.seek(0); return buffer, sheet_count
+            
+    c.save(); buffer.seek(0)
+    return buffer, (current_sheet_val - start_sheet_no + 1), current_sheet_val
 
 # --- STREAMLIT UI ---
 st.set_page_config(page_title="CTR Generator", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
+if 'start_sheet' not in st.session_state:
+    st.session_state.start_sheet = 1
+
 with st.sidebar:
-    with st.expander("📘 USER MANUAL & INTERFACE GUIDE", expanded=False):
-        st.markdown("### 1. Data Import Protocol")
-        st.info("Input `.txt` files must follow the structural format below:")
-        st.code("RowID, Function [Start to End], CableDetail")
+    # --- UPDATED INSTRUCTION SECTION ---
+    with st.expander("📘 USER MANUAL & TXT FORMAT", expanded=True):
+        st.markdown("### 1. Set Sheet Number")
+        st.info("To define the starting page, add this at the top of your file:")
+        st.code("SHEET: 05", language="text")
+        
+        st.markdown("### 2. Add Terminal Data")
+        st.info("Follow this comma-separated structure:")
+        st.code("RowID, Function [Start to End], CableDetail", language="text")
+        
+        st.markdown("### 3. Example File")
+        st.code("SHEET: 12\nA, SPARE [01 to 10], 12C MAIN\nB, HR [01 to 05], 24C MAIN", language="text")
         
     st.divider()
     st.header("⚙️ Page Setting")
@@ -160,18 +185,23 @@ with st.sidebar:
     
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
 
-uploaded_file = st.file_uploader("Upload .txt file for Terminal Content", type=["txt"])
+uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
 
 if uploaded_file:
     raw_text = uploaded_file.getvalue().decode("utf-8")
     all_parsed = []
     for line in raw_text.splitlines():
         if line.strip():
-            parsed = parse_fixed_format_multi_function(line.strip())
-            if parsed: all_parsed.extend(parsed)
+            result = parse_fixed_format_multi_function(line.strip())
+            if result:
+                rtype, data = result
+                if rtype == "SHEET_SET":
+                    st.session_state.start_sheet = data
+                elif rtype == "DATA":
+                    all_parsed.extend(data)
     if all_parsed:
         st.session_state.df = pd.DataFrame(all_parsed).reset_index(drop=True)
-        st.success(f"Successfully loaded {len(st.session_state.df)} terminals.")
+        st.success(f"✅ Data Loaded. Starting from Sheet {st.session_state.start_sheet}")
 
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "30C RR TO GOOMTY-01", "Terminal Number": "01"}])
@@ -180,20 +210,17 @@ st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", us
 
 if st.button("🚀 Generate PDF Drawing"):
     if not st.session_state.df.empty:
-        # process_drawing now returns total sheets too
-        pdf_buffer, total_sheets = process_drawing(st.session_state.df, fs, f_vals, page_heading)
+        pdf_buffer, total_pages, last_sheet = process_drawing(
+            st.session_state.df, fs, f_vals, page_heading, st.session_state.start_sheet
+        )
         
-        # --- DYNAMIC FILENAME LOGIC ---
-        # Get current date
         current_date = datetime.now().strftime("%d-%m-%Y")
-        
-        # Format: RR-GOOMTY-LOCATION BOX_STATION_SHEET NUMBER_DATE.PDF
-        # Sanitizing '/' to '-' to prevent file path errors
         clean_rr = goomty_no.replace("/", "-")
         clean_lb = lb_no.replace("/", "-")
         clean_stn = station.replace("/", "-")
         
-        dynamic_name = f"{clean_rr}_{clean_lb}_{clean_stn}_SHEET-{total_sheets:02}_{current_date}.pdf"
+        sheet_label = f"{st.session_state.start_sheet:02}" if total_pages == 1 else f"{st.session_state.start_sheet:02}-to-{last_sheet:02}"
+        dynamic_name = f"{clean_rr}_{clean_lb}_{clean_stn}_SHEET-{sheet_label}_{current_date}.pdf"
         
         st.download_button(
             label="⬇️ Download PDF Drawing",
@@ -201,5 +228,3 @@ if st.button("🚀 Generate PDF Drawing"):
             file_name=dynamic_name,
             mime="application/pdf"
         )
-        st.info(f"Filename: {dynamic_name}")
-
