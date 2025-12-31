@@ -76,7 +76,7 @@ def draw_resistance_symbol(c, x, y):
 
 
 
-[Image of an electrical resistor symbol in a circuit diagram]
+#[Image of an electrical resistor symbol in a circuit diagram]
 
 
 def draw_choke_symbol(c, x, y):
