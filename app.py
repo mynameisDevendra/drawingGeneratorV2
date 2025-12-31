@@ -28,7 +28,6 @@ def parse_txt_file(raw_text):
         line = line.strip()
         if not line: continue
         
-        # Check for Metadata Tags
         upper_line = line.upper()
         if upper_line.startswith("SHEET:"):
             val = re.search(r'\d+', line)
@@ -41,8 +40,6 @@ def parse_txt_file(raw_text):
             metadata["lb"] = line.split(":", 1)[1].strip()
         elif upper_line.startswith("SIP:"):
             metadata["sip"] = line.split(":", 1)[1].strip()
-        
-        # Parse Terminal Data (Comma separated)
         else:
             parts = [p.strip() for p in line.split(',')]
             if len(parts) >= 2:
@@ -171,27 +168,37 @@ if 'metadata' not in st.session_state:
     st.session_state.metadata = {"sheet": 1, "station": "STATION", "goomty": "G-05", "lb": "LB-01", "sip": "SIP/2025"}
 
 with st.sidebar:
-    with st.expander("📘 TXT FILE FORMAT GUIDE", expanded=True):
-        st.markdown("### 1. Define Footer Info")
-        st.info("Add these tags at the top of your text file:")
-        st.code("STATION: NEW DELHI\nGOOMTY: G-10\nLB: CTR-05\nSIP: SIP/2024/01\nSHEET: 05", language="text")
+    st.header("🛠️ Control Panel")
+    
+    # --- COLLAPSIBLE INSTRUCTIONS ---
+    with st.expander("📖 DOCUMENTATION & TXT FORMAT", expanded=False):
+        st.markdown("### **Header Metadata**")
+        st.caption("Include these tags at the top of your text file to auto-fill the drawing footer.")
+        st.code("""STATION: STATION NAME
+GOOMTY: G-NUMBER
+LB: LOCATION BOX NO
+SIP: SIP NUMBER
+SHEET: START PAGE NO""", language="text")
         
-        st.markdown("### 2. Define Terminals")
+        st.markdown("---")
+        st.markdown("### **Terminal Data**")
+        st.caption("Standard CSV format for the terminal layout.")
         st.code("RowID, Function [Start to End], CableDetail", language="text")
         
-        st.markdown("### Example File Content")
-        st.code("STATION: HOWRAH\nGOOMTY: G-01\nLB: CTR-01\nSHEET: 01\nA, SPARE [01 to 10], 12C MAIN", language="text")
-        
-    st.divider()
-    page_heading = st.text_input("Page Heading", "TERMINAL CHART / CTR PARTICULARS")
-    
-    # Static footer names that don't come from TXT
-    prep_by = st.text_input("Prepared By", "NOVALINE")
-    chk_by1 = st.text_input("Checked By 1", "SSE/SIG")
-    chk_by2 = st.text_input("Checked By 2", "ASTE/SIG")
-    app_by = st.text_input("Approved By", "DY.CSTE")
+        st.success("Tip: Tags are case-insensitive and can be in any order.")
 
-uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
+    # --- COLLAPSIBLE PAGE SETTINGS ---
+    with st.expander("🎨 PAGE & FOOTER SETTINGS", expanded=True):
+        page_heading = st.text_input("Main Page Heading", "TERMINAL CHART / CTR PARTICULARS")
+        st.divider()
+        st.caption("Personnel Details")
+        prep_by = st.text_input("Prepared By", "NOVALINE")
+        chk_by1 = st.text_input("Checked By (SSE)", "SSE/SIG")
+        chk_by2 = st.text_input("Checked By (ASTE)", "ASTE/SIG")
+        app_by = st.text_input("Approved By", "DY.CSTE")
+
+# --- MAIN INTERFACE ---
+uploaded_file = st.file_uploader("📂 Upload Drawing Content (.txt)", type=["txt"])
 
 if uploaded_file:
     raw_text = uploaded_file.getvalue().decode("utf-8")
@@ -200,17 +207,21 @@ if uploaded_file:
     if rows:
         st.session_state.metadata = meta
         st.session_state.df = pd.DataFrame(rows).reset_index(drop=True)
-        st.success(f"✅ Loaded: {meta['station']} | Goomty: {meta['goomty']} | Sheet: {meta['sheet']}")
+        # Professional summary of imported data
+        col1, col2, col3 = st.columns(3)
+        col1.metric("Station", meta['station'])
+        col2.metric("Goomty/LB", f"{meta['goomty']} / {meta['lb']}")
+        col3.metric("Start Sheet", f"{meta['sheet']:02}")
 
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "30C RR TO GOOMTY-01", "Terminal Number": "01"}])
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "SAMPLE CABLE", "Terminal Number": "01"}])
 
+st.markdown("### 📊 Data Review & Edit")
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
 
-if st.button("🚀 Generate PDF Drawing"):
+if st.button("🚀 Generate PDF Drawing", type="primary"):
     if not st.session_state.df.empty:
         m = st.session_state.metadata
-        # Assemble footer values from parsed metadata and sidebar inputs
         f_vals = [prep_by, chk_by1, chk_by2, app_by, m['lb'], m['goomty'], m['station'], m['sip'], "AUTO"]
         
         pdf_buffer, total_pages, last_sheet = process_drawing(
@@ -224,11 +235,13 @@ if st.button("🚀 Generate PDF Drawing"):
         current_date = datetime.now().strftime("%d-%m-%Y")
         clean_stn = m['station'].replace("/", "-")
         sheet_label = f"{m['sheet']:02}" if total_pages == 1 else f"{m['sheet']:02}-to-{last_sheet:02}"
-        dynamic_name = f"{m['goomty']}_{m['lb']}_{clean_stn}_SHEET-{sheet_label}_{current_date}.pdf"
+        filename = f"{m['goomty']}_{m['lb']}_{clean_stn}_SHEET-{sheet_label}_{current_date}.pdf"
         
+        st.divider()
         st.download_button(
-            label="⬇️ Download PDF Drawing",
+            label="📥 Download Finished PDF",
             data=pdf_buffer,
-            file_name=dynamic_name,
-            mime="application/pdf"
+            file_name=filename,
+            mime="application/pdf",
+            use_container_width=True
         )
