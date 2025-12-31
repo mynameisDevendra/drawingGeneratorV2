@@ -101,7 +101,7 @@ def draw_fuse_s_symbol(c, x, y):
 
 
 
-[Image of an electrical fuse symbol]
+#[Image of an electrical fuse symbol]
 
 
 # --- PDF ENGINE ---
