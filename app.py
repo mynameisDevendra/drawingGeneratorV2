@@ -16,7 +16,13 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- SAMPLE FILE CONTENT ---
+# --- CONSTANTS ---
+PAGE_MARGIN = 20
+SAFETY_OFFSET = 42.5
+FIXED_GAP = 33
+PAGE_SIZE = landscape(A3)
+ROW_HEIGHT_SPACING = 105 
+
 SAMPLE_CONTENT = """HEADING: SAMPLE TERMINAL CHART
 STATION: NEW DELHI
 LOCATION: LOC-01 / G-05
@@ -26,7 +32,6 @@ SHEET: 01
 A, SIGNAL HR [01 to 05], 12C MAIN
 A, SPARE [06 to 10]
 B, POINT NWKR [01 to 04], 19C TAIL
-B, NI [05 to 08]
 
 SHEET: 05
 LOCATION: LOC-02 / RR-NORTH
@@ -34,26 +39,50 @@ A, TRACK CIRCUIT [01 to 06], 2C CABLE
 A, SPARE [07 to 10]
 """
 
-# --- HELPER FUNCTIONS ---
-def validate_terminal_sequences(sheets_data):
-    errors = []
-    for s_idx, sheet in enumerate(sheets_data):
-        df = pd.DataFrame(sheet['rows'])
-        if df.empty: continue
-        df['num'] = pd.to_numeric(df['Terminal Number'], errors='coerce')
-        for rid, group in df.groupby('Row ID'):
-            sorted_nums = sorted(group['num'].dropna().unique())
-            if not sorted_nums: continue
-            for i in range(len(sorted_nums) - 1):
-                if sorted_nums[i+1] != sorted_nums[i] + 1:
-                    missing = list(range(int(sorted_nums[i]) + 1, int(sorted_nums[i+1])))
-                    missing_str = ", ".join([str(m).zfill(2) for m in missing])
-                    errors.append({
-                        "Sheet/Location": sheet['meta']['location'] or f"Sheet {s_idx+1}",
-                        "Row": rid,
-                        "Error": f"Gap: Missing {missing_str} (Between {int(sorted_nums[i]):02}-{int(sorted_nums[i+1]):02})"
-                    })
-    return errors
+# --- CORE FUNCTIONS ---
+
+def parse_multi_sheet_txt(raw_text):
+    sheets_data = []
+    current_meta = {"sheet": 1, "station": "", "location": "", "sip": "", "heading": "TERMINAL CHART"}
+    current_rows = []
+
+    for line in raw_text.splitlines():
+        line = line.strip()
+        if not line: continue
+        upper_line = line.upper()
+        
+        if upper_line.startswith("SHEET:"):
+            if current_rows:
+                sheets_data.append({"meta": current_meta.copy(), "rows": current_rows})
+                current_rows = []
+            val = re.search(r'\d+', line)
+            if val: current_meta["sheet"] = int(val.group())
+        elif upper_line.startswith("STATION:"):
+            current_meta["station"] = line.split(":", 1)[1].strip()
+        elif upper_line.startswith("LOCATION:"):
+            current_meta["location"] = line.split(":", 1)[1].strip()
+        elif upper_line.startswith("SIP:"):
+            current_meta["sip"] = line.split(":", 1)[1].strip()
+        elif upper_line.startswith("HEADING:"):
+            current_meta["heading"] = line.split(":", 1)[1].strip()
+        else:
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) >= 2:
+                rid, middle_part = parts[0].upper(), ",".join(parts[1:])
+                # Determine if last part is cable detail
+                last_part = parts[-1].upper()
+                term_keywords = ["SPARE", "RESERVED", "NI", "E3", "TERMINAL", "BLOCK", "LINK", "RESERVE"]
+                is_cable = not any(key in last_part for key in term_keywords)
+                cable_detail = last_part if (is_cable and len(parts) >= 3) else ""
+                
+                pattern = r'([^,\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]'
+                matches = re.findall(pattern, middle_part, re.I)
+                for match in matches:
+                    func_text, start, end = match[0].strip().upper(), int(match[1]), int(match[2])
+                    for i in range(start, end + 1):
+                        current_rows.append({"Row ID": rid, "Function": func_text, "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)})
+    if current_rows: sheets_data.append({"meta": current_meta, "rows": current_rows})
+    return sheets_data
 
 def draw_curly_bracket(c, x1, x2, y, is_top=True):
     mid_x = (x1 + x2) / 2
@@ -70,70 +99,123 @@ def draw_curly_bracket(c, x1, x2, y, is_top=True):
     p.curveTo(c3x, c3y, c4x, c4y, x2, y)
     c.drawPath(p)
 
-# ... [parse_multi_sheet_txt, draw_page_template, process_multi_sheet_pdf logic remains unchanged] ...
+def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
+    c.setLineWidth(1.5)
+    c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
+    c.setFont("Helvetica-Bold", 16)
+    c.drawCentredString(width / 2, height - 60, page_heading.upper())
+    footer_y = PAGE_MARGIN + 60
+    c.line(PAGE_MARGIN, footer_y, width - PAGE_MARGIN, footer_y)
+    total_footer_w = width - (2 * PAGE_MARGIN)
+    info_x = PAGE_MARGIN + (total_footer_w / 15)
+    c.line(info_x, PAGE_MARGIN, info_x, height - PAGE_MARGIN)
+    remaining_w = total_footer_w - (total_footer_w / 15)
+    box_w = remaining_w / 7 
+    dividers = [info_x + (i * box_w) for i in range(8)] 
+    for x in dividers[:-1]: c.line(x, PAGE_MARGIN, x, footer_y)
+    headers = ["PREPARED BY", "CHECKED BY", "CHECKED BY", "APPROVED BY", "LOCATION NO / GOOMTY / RR", "STATION", "SIP", "SHEET NO."]
+    for i in range(8):
+        x_c = (PAGE_MARGIN if i == 0 else dividers[i-1] + dividers[i]) / 2 if i != 0 else (PAGE_MARGIN + info_x)/2
+        if i > 0: x_c = (dividers[i-1] + dividers[i])/2
+        c.setFont("Helvetica-Bold", 4.0 if i == 4 else 4.5)
+        c.drawCentredString(x_c, footer_y - 12, headers[i])
+        c.setFont("Helvetica", 6.5)
+        val = f"{sheet_num:02}" if i == 7 else str(footer_values[i])
+        c.drawCentredString(x_c, footer_y - 30, val.upper())
+    return info_x
 
-# --- STREAMLIT SIDEBAR ---
+def process_multi_sheet_pdf(sheets_list, sig_data):
+    buffer = io.BytesIO()
+    width, height = PAGE_SIZE
+    c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
+    fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
+    for sheet in sheets_list:
+        meta = sheet['meta']
+        df = pd.DataFrame(sheet['rows'])
+        df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
+        df = df.sort_values(by=['Row ID', 'sort_key'])
+        f_vals = [sig_data['prep'], sig_data['chk1'], sig_data['chk2'], sig_data['app'], meta['location'], meta['station'], meta['sip'], "AUTO"]
+        info_x = PAGE_MARGIN + ((width - (2 * PAGE_MARGIN)) / 15)
+        term_per_row = int((width - info_x - SAFETY_OFFSET - 40) // FIXED_GAP)
+        y_curr, rows_on_page, current_sheet_no = height - 160, 0, meta['sheet']
+        draw_page_template(c, width, height, f_vals, current_sheet_no, meta['heading'])
+        for rid, group in df.groupby('Row ID', sort=False):
+            terms = group.to_dict('records')
+            chunks = [terms[i:i + term_per_row] for i in range(0, len(terms), term_per_row)]
+            for chunk in chunks:
+                if rows_on_page >= 6:
+                    c.showPage()
+                    current_sheet_no += 1
+                    draw_page_template(c, width, height, f_vals, current_sheet_no, meta['heading'])
+                    y_curr, rows_on_page = height - 160, 0
+                x_start = info_x + SAFETY_OFFSET + 20
+                c.setFont("Helvetica-Bold", fs['row']); c.drawRightString(x_start - 30, y_curr + 15, str(rid))
+                for idx, t in enumerate(chunk):
+                    tx = x_start + (idx * FIXED_GAP)
+                    c.setLineWidth(1); c.line(tx-3, y_curr, tx-3, y_curr+40); c.line(tx+3, y_curr, tx+3, y_curr+40)
+                    c.circle(tx, y_curr+40, 3, fill=1); c.circle(tx, y_curr, 3, fill=1)
+                    c.setFont("Helvetica-Bold", fs['term']); c.drawRightString(tx-8, y_curr+17, str(t['Terminal Number']).zfill(2))
+                for key, is_h, y_off in [('Function', True, 45), ('Cable Detail', False, -5)]:
+                    i = 0
+                    while i < len(chunk):
+                        txt = str(chunk[i][key]).upper().strip()
+                        if not txt: i += 1; continue
+                        start_i, end_i = i, i
+                        while i < len(chunk) and str(chunk[i][key]).upper().strip() == txt: end_i = i; i += 1
+                        s_x, e_x = x_start + (start_i * FIXED_GAP), x_start + (end_i * FIXED_GAP)
+                        draw_curly_bracket(c, s_x-5, e_x+5, y_curr + y_off, is_top=is_h)
+                        c.setFont("Helvetica-Bold", fs['head' if is_h else 'foot'])
+                        c.drawCentredString((s_x+e_x)/2, y_curr + y_off + (15 if is_h else -20), txt)
+                y_curr -= ROW_HEIGHT_SPACING
+                rows_on_page += 1
+        c.showPage() 
+    c.save(); buffer.seek(0); return buffer
+
+def validate_terminal_sequences(sheets_data):
+    errors = []
+    for s_idx, sheet in enumerate(sheets_data):
+        df = pd.DataFrame(sheet['rows'])
+        if df.empty: continue
+        df['num'] = pd.to_numeric(df['Terminal Number'], errors='coerce')
+        for rid, group in df.groupby('Row ID'):
+            nums = sorted(group['num'].dropna().unique())
+            for i in range(len(nums) - 1):
+                if nums[i+1] != nums[i] + 1:
+                    missing = ", ".join([str(m).zfill(2) for m in range(int(nums[i])+1, int(nums[i+1]))])
+                    errors.append({"Sheet/Location": sheet['meta']['location'] or f"Sheet {s_idx+1}", "Row": rid, "Error": f"Missing: {missing}"})
+    return errors
+
+# --- UI LOGIC ---
+
 with st.sidebar:
-    st.header("📂 Resources & Settings")
-    
-    # DOWNLOAD SAMPLE BUTTON
-    st.subheader("1. Sample Template")
-    st.download_button(
-        label="📥 Download Sample TXT File",
-        data=SAMPLE_CONTENT,
-        file_name="sample_ctr_input.txt",
-        mime="text/plain",
-        help="Download this to see how to format your input data correctly.",
-        use_container_width=True
-    )
-    
+    st.header("📂 Resources")
+    st.download_button("📥 Download Sample TXT", SAMPLE_CONTENT, "sample.txt", "text/plain", use_container_width=True)
     st.divider()
-    
-    # DOCUMENTATION
-    with st.expander("📘 Format Instructions", expanded=False):
-        st.markdown("**Tags:** `HEADING:`, `STATION:`, `LOCATION:`, `SHEET:`")
-        st.markdown("**Data:** `Row, Function [Start to End], CableDetail`")
-        st.info("Ensure No Gaps in Terminal Numbers (e.g., 1 to 4 then 5 to 8).")
+    with st.expander("✒️ Official Signatures", expanded=False):
+        sig_data = {"prep": st.text_input("Prepared By", "JE/SIG"), "chk1": st.text_input("Checked By (SSE)", "SSE/SIG"), 
+                    "chk2": st.text_input("Checked By (ASTE)", "ASTE"), "app": st.text_input("Approved By", "DSTE")}
 
-    # SIGNATURES
-    with st.expander("✒️ Signature Details", expanded=False):
-        sig_data = {
-            "prep": st.text_input("Prepared By", "JE/SIG"),
-            "chk1": st.text_input("Checked By (SSE)", "SSE/SIG"),
-            "chk2": st.text_input("Checked By (ASTE)", "ASTE"),
-            "app": st.text_input("Approved By", "DSTE")
-        }
-
-# --- MAIN INTERFACE ---
 st.title("🚉 Multi-Sheet CTR Generator")
-
-uploaded_file = st.file_uploader("📂 Upload Your Drawing Content (.txt)", type=["txt"])
+uploaded_file = st.file_uploader("📂 Upload Drawing Content (.txt)", type=["txt"])
 
 if uploaded_file:
     raw_text = uploaded_file.getvalue().decode("utf-8")
     st.session_state.sheets_data = parse_multi_sheet_txt(raw_text)
 
 if 'sheets_data' in st.session_state and st.session_state.sheets_data:
-    st.markdown("### 📊 Data Preview & Validation")
-    
-    # Sheet Selector
     sheet_names = [f"Sheet {s['meta']['sheet']}: {s['meta']['location']}" for s in st.session_state.sheets_data]
-    selected_sheet_idx = st.selectbox("Select Sheet to Edit", range(len(sheet_names)), format_func=lambda i: sheet_names[i])
+    sel_idx = st.selectbox("Select Sheet to Edit", range(len(sheet_names)), format_func=lambda i: sheet_names[i])
     
     # Data Editor
-    current_df = pd.DataFrame(st.session_state.sheets_data[selected_sheet_idx]['rows'])
-    edited_df = st.data_editor(current_df, num_rows="dynamic", use_container_width=True, key=f"editor_{selected_sheet_idx}")
-    st.session_state.sheets_data[selected_sheet_idx]['rows'] = edited_df.to_dict('records')
+    curr_rows = st.session_state.sheets_data[sel_idx]['rows']
+    edited_df = st.data_editor(pd.DataFrame(curr_rows), num_rows="dynamic", use_container_width=True)
+    st.session_state.sheets_data[sel_idx]['rows'] = edited_df.to_dict('records')
     
-    # Sequence Check
-    seq_errors = validate_terminal_sequences(st.session_state.sheets_data)
-    if seq_errors:
-        st.error("⚠️ Sequence Errors Found!")
-        st.table(seq_errors)
-    else:
-        st.success("✅ Terminal sequences are continuous.")
+    # Validation
+    errs = validate_terminal_sequences(st.session_state.sheets_data)
+    if errs: st.error("⚠️ Sequence Gaps Detected!"); st.table(errs)
+    else: st.success("✅ Sequences Continuous")
 
-    # PDF Generation
-    if st.button("🚀 Generate Final PDF Drawing", type="primary", use_container_width=True):
-        pdf_buffer = process_multi_sheet_pdf(st.session_state.sheets_data, sig_data)
-        st.download_button(label="📥 Download PDF", data=pdf_buffer, file_name=f"CTR_Output_{datetime.now().strftime('%d%m%Y')}.pdf", mime="application/pdf", use_container_width=True)
+    if st.button("🚀 Generate PDF Drawing", type="primary", use_container_width=True):
+        pdf = process_multi_sheet_pdf(st.session_state.sheets_data, sig_data)
+        st.download_button("📥 Download PDF", pdf, "Drawing.pdf", "application/pdf", use_container_width=True)
