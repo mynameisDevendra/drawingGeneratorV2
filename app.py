@@ -146,7 +146,7 @@ with st.sidebar:
     st.header("⚙️ Page Setting")
     page_heading = st.text_input("Page Heading", "TERMINAL CHART / CTR PARTICULARS")
     
-    with st.expander("📂 Footer Details", expanded=True):
+    with st.expander("📂 Footer Details", expanded=FALSE):
         prep_by = st.text_input("Prepared By", "NOVALINE")
         chk_by1 = st.text_input("Checked By 1", "SSE/SIG")
         chk_by2 = st.text_input("Checked By 2", "ASTE/SIG")
