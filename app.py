@@ -81,7 +81,7 @@ def draw_fuse_symbol(c, x, y):
 
 
 
-[Image of an electrical fuse symbol]
+#[Image of an electrical fuse symbol]
 
 
 def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
