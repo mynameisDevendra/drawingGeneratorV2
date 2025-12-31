@@ -16,7 +16,6 @@ ROW_HEIGHT_SPACING = 105
 def parse_txt_file(raw_text):
     """Parses tags and terminal data from the text file."""
     data_rows = []
-    # Removed specific defaults (G-05, CTR-01, etc.)
     metadata = {
         "sheet": 1,
         "station": "",
@@ -171,7 +170,6 @@ def process_drawing(df, fs, footer_values, page_heading, start_sheet_no):
 st.set_page_config(page_title="CTR Generator Pro", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
-# Initialize State with Empty Placeholders
 if 'metadata' not in st.session_state:
     st.session_state.metadata = {"sheet": 1, "station": "", "location": "", "sip": "", "heading": ""}
 
@@ -179,12 +177,20 @@ with st.sidebar:
     st.header("🛠️ Control Panel")
     
     with st.expander("📖 DOCUMENTATION & TXT FORMAT", expanded=False):
-        st.markdown("### **Header Metadata Tags**")
+        st.markdown("### **1. Header Tags**")
         st.code("""HEADING: MAIN PAGE TITLE
 STATION: STATION NAME
 LOCATION: LOCATION NO / GOOMTY / RR
 SIP: SIP NUMBER
 SHEET: START PAGE NO""", language="text")
+        
+        st.markdown("---")
+        st.markdown("### **2. Terminal & Cable Format**")
+        st.markdown("Format: `RowID, Function [Start to End], CableDetail` ")
+        st.warning("**Note:** If the last part is 'SPARE' or 'NI', it's treated as a Function. Otherwise, it is treated as a Cable Detail.")
+        st.code("""A, SPARE [01 to 10]
+B, SIGNAL HR [01 to 05], 12C CABLE
+C, NI [01 to 02]""", language="text")
 
     with st.expander("✒️ OFFICIAL NAMES FOR SIGNATURES", expanded=False):
         prep_by = st.text_input("Prepared By", "")
@@ -228,7 +234,6 @@ if st.button("🚀 Generate PDF Drawing", type="primary"):
         )
         
         current_date = datetime.now().strftime("%d-%m-%Y")
-        # Sanitize for filename
         clean_stn = m['station'].replace("/", "-") if m['station'] else "STN"
         clean_loc = m['location'].replace("/", "-") if m['location'] else "LOC"
         
