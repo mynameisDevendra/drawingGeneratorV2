@@ -7,15 +7,15 @@ import io
 import zipfile
 from datetime import datetime
 
-# --- LAYOUT CONSTANTS (Keep your existing constants) ---
+# --- LAYOUT CONSTANTS ---
 PAGE_MARGIN = 20
 SAFETY_OFFSET = 42.5
 FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 105 
 
-# --- PARSING & DRAWING FUNCTIONS (Keep your existing logic) ---
 def parse_fixed_format_multi_function(text):
+    """Refined Parser: Distinguishes between Terminal Details and Cable Details."""
     new_rows = []
     try:
         parts = [p.strip() for p in text.split(',')]
@@ -44,23 +44,27 @@ def parse_fixed_format_multi_function(text):
                     "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)
                 })
         return new_rows
-    except: return None
+    except Exception:
+        return None
 
 def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
     c.setLineWidth(1.5)
     c.rect(PAGE_MARGIN, PAGE_MARGIN, width - (2 * PAGE_MARGIN), height - (2 * PAGE_MARGIN))
     c.setFont("Helvetica-Bold", 16)
     c.drawCentredString(width / 2, height - 60, page_heading.upper())
+    
     footer_y = PAGE_MARGIN + 60
     c.line(PAGE_MARGIN, footer_y, width - PAGE_MARGIN, footer_y)
     total_footer_w = width - (2 * PAGE_MARGIN)
     info_x_width = total_footer_w / 15  
     info_x = PAGE_MARGIN + info_x_width
     c.line(info_x, PAGE_MARGIN, info_x, height - PAGE_MARGIN)
+    
     remaining_w = total_footer_w - info_x_width
     box_w = remaining_w / 8
     dividers = [info_x + (i * box_w) for i in range(9)] 
     for x in dividers[:-1]: c.line(x, PAGE_MARGIN, x, footer_y)
+
     headers = ["PREPARED BY", "CHECKED BY", "CHECKED BY", "APPROVED BY", "LB/CTR/RR NO.", "RR/GOOMTY NO.", "STATION", "SIP", "SHEET NO."]
     for i in range(9):
         x_start = PAGE_MARGIN if i == 0 else dividers[i-1]
@@ -78,20 +82,27 @@ def process_drawing(df, fs, footer_values, page_heading):
     buffer = io.BytesIO()
     width, height = PAGE_SIZE
     c = canvas.Canvas(buffer, pagesize=PAGE_SIZE)
+    
     df['sort_key'] = df['Terminal Number'].apply(lambda s: int(re.findall(r'\d+', str(s))[0]) if re.findall(r'\d+', str(s)) else 0)
     df = df.sort_values(by=['Row ID', 'sort_key'])
+    
     info_x = PAGE_MARGIN + ((width - (2 * PAGE_MARGIN)) / 15)
     max_draw_w = width - info_x - SAFETY_OFFSET - 40
     terminals_per_row = int(max_draw_w // FIXED_GAP)
-    sheet_count, rows_on_page = 1, 0
+    
+    sheet_count = 1
     y_start, y_curr = height - 160, height - 160
+    rows_on_page = 0
+    
     draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
+    
     for rid, group in df.groupby('Row ID', sort=False):
         terms = group.to_dict('records')
         chunks = [terms[i:i + terminals_per_row] for i in range(0, len(terms), terminals_per_row)]
         for chunk in chunks:
             if rows_on_page >= 6:
-                c.showPage(); sheet_count += 1
+                c.showPage()
+                sheet_count += 1
                 draw_page_template(c, width, height, footer_values, sheet_count, page_heading)
                 y_curr, rows_on_page = y_start, 0
             x_start = info_x + SAFETY_OFFSET + 20
@@ -118,7 +129,8 @@ def process_drawing(df, fs, footer_values, page_heading):
                     else:
                         c.line(s_x-5, y_curr+y_off, s_x-5, y_curr+y_off+5); c.line(e_x+5, y_curr+y_off, e_x+5, y_curr+y_off+5)
                         c.drawCentredString(mid_x, y_curr+y_off-15, txt)
-            y_curr -= ROW_HEIGHT_SPACING; rows_on_page += 1
+            y_curr -= ROW_HEIGHT_SPACING
+            rows_on_page += 1
     c.save(); buffer.seek(0); return buffer, sheet_count
 
 # --- STREAMLIT UI ---
@@ -126,10 +138,15 @@ st.set_page_config(page_title="Batch CTR Generator", layout="wide")
 st.title("🚉 Batch CTR Particular Generator")
 
 with st.sidebar:
+    with st.expander("📘 USER MANUAL", expanded=False):
+        st.markdown("### 1. Batch Upload")
+        st.info("You can upload multiple files. The editor will show the content of the first file for verification.")
+        
+    st.divider()
     st.header("⚙️ Page Setting")
     page_heading = st.text_input("Page Heading", "TERMINAL CHART / CTR PARTICULARS")
     
-    with st.expander("📂 Footer Details", expanded=True):
+    with st.expander("📂 Footer Details", expanded=False):
         prep_by = st.text_input("Prepared By", "NOVALINE")
         chk_by1 = st.text_input("Checked By 1", "SSE/SIG")
         chk_by2 = st.text_input("Checked By 2", "ASTE/SIG")
@@ -138,54 +155,70 @@ with st.sidebar:
         goomty_no = st.text_input("Goomty No", "G-05")
         station = st.text_input("Station", "STATION NAME")
         sip_no = st.text_input("SIP No", "SIP/2025")
-        
         f_vals = [prep_by, chk_by1, chk_by2, app_by, lb_no, goomty_no, station, sip_no, "AUTO"]
     
     fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
 
-# CHANGED: accept_multiple_files=True
-uploaded_files = st.file_uploader("Upload multiple .txt files", type=["txt"], accept_multiple_files=True)
+# CHANGED: Added accept_multiple_files=True
+uploaded_files = st.file_uploader("Upload .txt files for Terminal Content", type=["txt"], accept_multiple_files=True)
 
 if uploaded_files:
-    # Create a ZIP buffer to store all PDFs
-    zip_buffer = io.BytesIO()
-    
-    with zipfile.ZipFile(zip_buffer, "a", zipfile.ZIP_DEFLATED, False) as zip_file:
-        for uploaded_file in uploaded_files:
-            raw_text = uploaded_file.getvalue().decode("utf-8")
-            all_parsed = []
-            for line in raw_text.splitlines():
-                if line.strip():
-                    parsed = parse_fixed_format_multi_function(line.strip())
-                    if parsed: all_parsed.extend(parsed)
-            
-            if all_parsed:
-                temp_df = pd.DataFrame(all_parsed)
-                pdf_output, total_sheets = process_drawing(temp_df, fs, f_vals, page_heading)
-                
-                # Dynamic Filename Logic
-                current_date = datetime.now().strftime("%d-%m-%Y")
-                clean_rr = goomty_no.replace("/", "-")
-                clean_lb = lb_no.replace("/", "-")
-                clean_stn = station.replace("/", "-")
-                
-                # We use the original filename (without .txt) to keep them distinct in the ZIP
-                original_name = uploaded_file.name.replace(".txt", "")
-                dynamic_name = f"{original_name}_{clean_rr}_{clean_lb}_{clean_stn}_SHT-{total_sheets:02}_{current_date}.pdf"
-                
-                # Add PDF to ZIP
-                zip_file.writestr(dynamic_name, pdf_output.getvalue())
-    
-    zip_buffer.seek(0)
-    
-    st.success(f"✅ Processed {len(uploaded_files)} files successfully!")
-    
-    st.download_button(
-        label="📥 Download All PDFs (ZIP)",
-        data=zip_buffer,
-        file_name=f"CTR_Batch_{datetime.now().strftime('%H%M%S')}.zip",
-        mime="application/zip"
-    )
+    # Handle data for the Data Editor (showing first file as sample)
+    if 'current_files' not in st.session_state or st.session_state.current_files != [f.name for f in uploaded_files]:
+        st.session_state.current_files = [f.name for f in uploaded_files]
+        raw_text = uploaded_files[0].getvalue().decode("utf-8")
+        all_parsed = []
+        for line in raw_text.splitlines():
+            if line.strip():
+                parsed = parse_fixed_format_multi_function(line.strip())
+                if parsed: all_parsed.extend(parsed)
+        if all_parsed:
+            st.session_state.df = pd.DataFrame(all_parsed).reset_index(drop=True)
 
-else:
-    st.info("Please upload one or more .txt files to begin.")
+if 'df' not in st.session_state:
+    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "30C RR TO GOOMTY-01", "Terminal Number": "01"}])
+
+st.subheader("📝 Data Editor (Previewing First File)")
+st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
+
+if st.button("🚀 Generate All PDF Drawings"):
+    if uploaded_files:
+        zip_buffer = io.BytesIO()
+        current_date = datetime.now().strftime("%d-%m-%Y")
+        
+        with zipfile.ZipFile(zip_buffer, "w") as zip_file:
+            for i, uploaded_file in enumerate(uploaded_files):
+                # For the first file, use the edited dataframe from UI
+                # For subsequent files, parse them directly
+                if i == 0:
+                    working_df = st.session_state.df
+                else:
+                    raw_text = uploaded_file.getvalue().decode("utf-8")
+                    all_parsed = []
+                    for line in raw_text.splitlines():
+                        if line.strip():
+                            parsed = parse_fixed_format_multi_function(line.strip())
+                            if parsed: all_parsed.extend(parsed)
+                    working_df = pd.DataFrame(all_parsed) if all_parsed else pd.DataFrame()
+
+                if not working_df.empty:
+                    pdf_content, total_sheets = process_drawing(working_df, fs, f_vals, page_heading)
+                    
+                    # Construct filename using original txt name + footer details
+                    clean_orig = uploaded_file.name.replace(".txt", "")
+                    clean_rr = goomty_no.replace("/", "-")
+                    clean_lb = lb_no.replace("/", "-")
+                    clean_stn = station.replace("/", "-")
+                    
+                    dynamic_name = f"{clean_orig}_{clean_rr}_{clean_lb}_{clean_stn}_SHT-{total_sheets:02}_{current_date}.pdf"
+                    zip_file.writestr(dynamic_name, pdf_content.getvalue())
+
+        zip_buffer.seek(0)
+        st.download_button(
+            label="📥 Download All PDFs as ZIP",
+            data=zip_buffer,
+            file_name=f"CTR_Batch_{current_date}.zip",
+            mime="application/zip"
+        )
+    else:
+        st.error("Please upload files first.")
