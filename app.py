@@ -16,11 +16,12 @@ ROW_HEIGHT_SPACING = 105
 def parse_txt_file(raw_text):
     """Parses tags and terminal data from the text file."""
     data_rows = []
+    # Removed specific defaults (G-05, CTR-01, etc.)
     metadata = {
         "sheet": 1,
-        "station": "STATION NAME",
-        "location": "G-05 / CTR-01", # Combined default
-        "sip": "SIP/2025",
+        "station": "",
+        "location": "", 
+        "sip": "",
         "heading": "TERMINAL CHART / CTR PARTICULARS"
     }
 
@@ -78,17 +79,15 @@ def draw_page_template(c, width, height, footer_values, sheet_num, page_heading)
     c.line(PAGE_MARGIN, footer_y, width - PAGE_MARGIN, footer_y)
     total_footer_w = width - (2 * PAGE_MARGIN)
     
-    # Re-calculating grid for 8 boxes (instead of 9) to fit merged location box
     info_x_width = total_footer_w / 15  
     info_x = PAGE_MARGIN + info_x_width
     c.line(info_x, PAGE_MARGIN, info_x, height - PAGE_MARGIN)
     
     remaining_w = total_footer_w - info_x_width
-    box_w = remaining_w / 7 # Adjusted for merged field
+    box_w = remaining_w / 7 
     dividers = [info_x + (i * box_w) for i in range(8)] 
     for x in dividers[:-1]: c.line(x, PAGE_MARGIN, x, footer_y)
 
-    # Merged header name
     headers = [
         "PREPARED BY", "CHECKED BY", "CHECKED BY", "APPROVED BY", 
         "LOCATION NO / GOOMTY / RR", "STATION", "SIP", "SHEET NO."
@@ -99,12 +98,10 @@ def draw_page_template(c, width, height, footer_values, sheet_num, page_heading)
         x_end = dividers[i]
         x_c = (x_start + x_end) / 2
         
-        # Adjusting font for long merged header
         c.setFont("Helvetica-Bold", 4.0 if i == 4 else 4.5)
         c.drawCentredString(x_c, footer_y - 12, headers[i])
         
         c.setFont("Helvetica", 6.5)
-        # Mapping sheet number to the last index
         val = f"{sheet_num:02}" if i == 7 else str(footer_values[i])
         lines = val.upper().split('\n')
         for idx, line in enumerate(lines):
@@ -174,8 +171,9 @@ def process_drawing(df, fs, footer_values, page_heading, start_sheet_no):
 st.set_page_config(page_title="CTR Generator Pro", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
+# Initialize State with Empty Placeholders
 if 'metadata' not in st.session_state:
-    st.session_state.metadata = {"sheet": 1, "station": "STATION", "location": "G-05", "sip": "SIP/2025", "heading": "TERMINAL CHART / CTR PARTICULARS"}
+    st.session_state.metadata = {"sheet": 1, "station": "", "location": "", "sip": "", "heading": ""}
 
 with st.sidebar:
     st.header("🛠️ Control Panel")
@@ -187,22 +185,12 @@ STATION: STATION NAME
 LOCATION: LOCATION NO / GOOMTY / RR
 SIP: SIP NUMBER
 SHEET: START PAGE NO""", language="text")
-        
-        st.markdown("---")
-        st.markdown("### **Required Example Format**")
-        st.code("""HEADING: TERMINAL CHART FOR JUNCTION BOX 01
-STATION: HOWRAH
-LOCATION: G-05 / CTR-01
-SIP: SIP/2025/01
-SHEET: 01
-
-A, SPARE [01 to 10], 12C MAIN CABLE""", language="text")
 
     with st.expander("✒️ OFFICIAL NAMES FOR SIGNATURES", expanded=False):
-        prep_by = st.text_input("Prepared By", "NOVALINE")
-        chk_by1 = st.text_input("Checked By (SSE)", "SSE/SIG")
-        chk_by2 = st.text_input("Checked By (ASTE)", "ASTE/SIG")
-        app_by = st.text_input("Approved By", "DY.CSTE")
+        prep_by = st.text_input("Prepared By", "")
+        chk_by1 = st.text_input("Checked By (SSE)", "")
+        chk_by2 = st.text_input("Checked By (ASTE)", "")
+        app_by = st.text_input("Approved By", "")
 
 # --- MAIN INTERFACE ---
 uploaded_file = st.file_uploader("📂 Upload Drawing Content (.txt)", type=["txt"])
@@ -215,13 +203,13 @@ if uploaded_file:
         st.session_state.metadata = meta
         st.session_state.df = pd.DataFrame(rows).reset_index(drop=True)
         col1, col2, col3 = st.columns(3)
-        col1.metric("Station", meta['station'])
-        col2.metric("Location / RR", meta['location'])
+        col1.metric("Station", meta['station'] if meta['station'] else "N/A")
+        col2.metric("Location / RR", meta['location'] if meta['location'] else "N/A")
         col3.metric("Start Sheet", f"{meta['sheet']:02}")
         st.info(f"📑 **Active Heading:** {meta['heading']}")
 
 if 'df' not in st.session_state:
-    st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "SAMPLE CABLE", "Terminal Number": "01"}])
+    st.session_state.df = pd.DataFrame([{"Row ID": "", "Function": "", "Cable Detail": "", "Terminal Number": "01"}])
 
 st.markdown("### 📊 Data Review & Edit")
 st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", use_container_width=True)
@@ -229,7 +217,6 @@ st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", us
 if st.button("🚀 Generate PDF Drawing", type="primary"):
     if not st.session_state.df.empty:
         m = st.session_state.metadata
-        # Adjusted f_vals for the 8-cell layout
         f_vals = [prep_by, chk_by1, chk_by2, app_by, m['location'], m['station'], m['sip'], "AUTO"]
         
         pdf_buffer, total_pages, last_sheet = process_drawing(
@@ -241,8 +228,10 @@ if st.button("🚀 Generate PDF Drawing", type="primary"):
         )
         
         current_date = datetime.now().strftime("%d-%m-%Y")
-        clean_stn = m['station'].replace("/", "-")
-        clean_loc = m['location'].replace("/", "-")
+        # Sanitize for filename
+        clean_stn = m['station'].replace("/", "-") if m['station'] else "STN"
+        clean_loc = m['location'].replace("/", "-") if m['location'] else "LOC"
+        
         sheet_label = f"{m['sheet']:02}" if total_pages == 1 else f"{m['sheet']:02}-to-{last_sheet:02}"
         filename = f"{clean_loc}_{clean_stn}_SHEET-{sheet_label}_{current_date}.pdf"
         
