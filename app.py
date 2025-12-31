@@ -9,21 +9,22 @@ from datetime import datetime
 # --- UI CONFIG & CUSTOM CSS ---
 st.set_page_config(page_title="CTR Generator Pro", layout="wide")
 
-# CSS to fix cursor disappearing and improve UI contrast
+# Corrected CSS block to fix cursor and layout
 st.markdown("""
     <style>
     /* Force cursor visibility on select boxes and inputs */
     div[data-baseweb="select"] {
         cursor: pointer !important;
     }
-    input, select, textarea {
-        cursor: text !important;
-    }
     .stSelectbox div {
         cursor: pointer !important;
     }
+    /* Improve table padding */
+    .stTable {
+        font-size: 12px;
+    }
     </style>
-    """, unsafe_content_safe=True)
+    """, unsafe_allow_html=True)
 
 # --- LAYOUT CONSTANTS ---
 PAGE_MARGIN = 20
@@ -167,33 +168,31 @@ if 'sheets_data' not in st.session_state:
 with st.sidebar:
     st.header("🛠️ Control Panel")
     
-    # COMPREHENSIVE INSTRUCTIONS
     with st.expander("📘 COMPREHENSIVE TXT GUIDE", expanded=False):
-        st.markdown("### **1. Header Tags (Control)**")
-        st.write("Place these at the start of a sheet group. They are case-insensitive.")
-        st.code("""HEADING: Drawing Title
+        st.markdown("### **1. Core Formatting Rules**")
+        st.write("The file is divided by **Sheet Tags**. Everything between two `SHEET:` tags belongs to the first one.")
+        
+        st.markdown("### **2. Control Tags (Case-Insensitive)**")
+        st.code("""HEADING: Drawing Title (Top of page)
 STATION: Station Name
-LOCATION: Loc No / Goomty
+LOCATION: Location No / Goomty / RR
 SIP: SIP Reference No
-SHEET: Starting Page No""", language="text")
+SHEET: Start Page Number""", language="text")
         
-        st.markdown("### **2. Terminal Row Format**")
-        st.write("`RowID, Function [Range], CableDetail`")
-        st.markdown("""
-        * **Function:** Circuit name (e.g., *SIGNAL HR*).
-        * **Range:** Use `[01 to 10]` to create terminals 1 through 10.
-        * **Cable Detail:** Destination/Size. If left out, last item is Cable Detail unless it contains keywords like 'SPARE' or 'NI'.
-        """)
+        st.markdown("### **3. Row Data Logic**")
+        st.write("Format: `RowID, Function [Range], CableDetail` ")
+        st.info("The [01 to 10] range automatically expands into 10 separate terminal circles.")
         
-        st.markdown("### **3. Multi-Sheet Breaks**")
-        st.write("To start a new drawing in the same file, simply add a new `SHEET:` tag.")
-        st.code("""SHEET: 01
-LOCATION: LOC-1
+        st.markdown("### **4. Multi-Sheet Break Example**")
+        st.code("""STATION: HOWRAH
+SHEET: 01
+LOCATION: LOC-01
 A, SPARE [01-10]
 
-SHEET: 05
-LOCATION: LOC-2
-A, NI [01-05]""", language="text")
+SHEET: 10
+LOCATION: RR-NORTH
+A, SIGNAL HR [01-05], 12C MAIN
+B, SPARE [01-10]""", language="text")
 
     with st.expander("✒️ OFFICIAL NAMES FOR SIGNATURES", expanded=False):
         sig_data = {
@@ -222,7 +221,6 @@ if st.session_state.sheets_data:
     
     st.session_state.sheets_data[selected_sheet_idx]['rows'] = edited_df.to_dict('records')
 
-    # Excel Export
     try:
         output = io.BytesIO()
         with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
