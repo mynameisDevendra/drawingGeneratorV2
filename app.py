@@ -99,7 +99,7 @@ def validate_terminal_sequences(sheets_data):
                         errors.append({
                             "Sheet/Location": sheet['meta']['location'] or f"Sheet {s_idx+1}", 
                             "Row": rid, 
-                            "Error": f"Missing: {str(m).zfill(2)}"
+                            "Error": f"Terminal Missing: {str(m).zfill(2)}"
                         })
     return errors
 
