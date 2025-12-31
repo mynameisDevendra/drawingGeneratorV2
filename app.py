@@ -6,6 +6,25 @@ import re
 import io
 from datetime import datetime
 
+# --- UI CONFIG & CUSTOM CSS ---
+st.set_page_config(page_title="CTR Generator Pro", layout="wide")
+
+# CSS to fix cursor disappearing and improve UI contrast
+st.markdown("""
+    <style>
+    /* Force cursor visibility on select boxes and inputs */
+    div[data-baseweb="select"] {
+        cursor: pointer !important;
+    }
+    input, select, textarea {
+        cursor: text !important;
+    }
+    .stSelectbox div {
+        cursor: pointer !important;
+    }
+    </style>
+    """, unsafe_content_safe=True)
+
 # --- LAYOUT CONSTANTS ---
 PAGE_MARGIN = 20
 SAFETY_OFFSET = 42.5
@@ -140,7 +159,6 @@ def process_multi_sheet_pdf(sheets_list, sig_data):
     return buffer
 
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="Multi-Sheet CTR Generator", layout="wide")
 st.title("🚉 Multi-Sheet CTR Generator")
 
 if 'sheets_data' not in st.session_state:
@@ -148,8 +166,35 @@ if 'sheets_data' not in st.session_state:
 
 with st.sidebar:
     st.header("🛠️ Control Panel")
-    with st.expander("📖 DOCUMENTATION & TXT FORMAT", expanded=False):
-        st.code("""SHEET: 01\nLOCATION: LOC-01 / G-05\nA, SPARE [01 to 10]\n\nSHEET: 05\nLOCATION: LOC-02 / G-10\nA, NI [01 to 04]""", language="text")
+    
+    # COMPREHENSIVE INSTRUCTIONS
+    with st.expander("📘 COMPREHENSIVE TXT GUIDE", expanded=False):
+        st.markdown("### **1. Header Tags (Control)**")
+        st.write("Place these at the start of a sheet group. They are case-insensitive.")
+        st.code("""HEADING: Drawing Title
+STATION: Station Name
+LOCATION: Loc No / Goomty
+SIP: SIP Reference No
+SHEET: Starting Page No""", language="text")
+        
+        st.markdown("### **2. Terminal Row Format**")
+        st.write("`RowID, Function [Range], CableDetail`")
+        st.markdown("""
+        * **Function:** Circuit name (e.g., *SIGNAL HR*).
+        * **Range:** Use `[01 to 10]` to create terminals 1 through 10.
+        * **Cable Detail:** Destination/Size. If left out, last item is Cable Detail unless it contains keywords like 'SPARE' or 'NI'.
+        """)
+        
+        st.markdown("### **3. Multi-Sheet Breaks**")
+        st.write("To start a new drawing in the same file, simply add a new `SHEET:` tag.")
+        st.code("""SHEET: 01
+LOCATION: LOC-1
+A, SPARE [01-10]
+
+SHEET: 05
+LOCATION: LOC-2
+A, NI [01-05]""", language="text")
+
     with st.expander("✒️ OFFICIAL NAMES FOR SIGNATURES", expanded=False):
         sig_data = {
             "prep": st.text_input("Prepared By", ""),
@@ -158,7 +203,8 @@ with st.sidebar:
             "app": st.text_input("Approved By", "")
         }
 
-uploaded_file = st.file_uploader("📂 Upload Multi-Sheet Drawing Content (.txt)", type=["txt"])
+# --- MAIN INTERFACE ---
+uploaded_file = st.file_uploader("📂 Upload Drawing Content (.txt)", type=["txt"])
 
 if uploaded_file:
     raw_text = uploaded_file.getvalue().decode("utf-8")
@@ -168,23 +214,24 @@ if uploaded_file:
 if st.session_state.sheets_data:
     st.markdown("### 📊 Data Preview & Edit")
     
-    # Selector for which sheet to view/edit
     sheet_names = [f"Sheet {s['meta']['sheet']}: {s['meta']['location']}" for s in st.session_state.sheets_data]
     selected_sheet_idx = st.selectbox("Select Sheet to Preview/Edit", range(len(sheet_names)), format_func=lambda i: sheet_names[i])
     
-    # Edit the selected sheet's dataframe
     current_df = pd.DataFrame(st.session_state.sheets_data[selected_sheet_idx]['rows'])
     edited_df = st.data_editor(current_df, num_rows="dynamic", use_container_width=True, key=f"editor_{selected_sheet_idx}")
     
-    # Update state with edits
     st.session_state.sheets_data[selected_sheet_idx]['rows'] = edited_df.to_dict('records')
 
-    # Excel Export Link
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        for i, s in enumerate(st.session_state.sheets_data):
-            pd.DataFrame(s['rows']).to_excel(writer, sheet_name=f"Sheet_{s['meta']['sheet']}", index=False)
-    st.download_button(label="📥 Download All Tables as Excel", data=output.getvalue(), file_name="Parsed_Terminal_Data.xlsx", mime="application/vnd.ms-excel")
+    # Excel Export
+    try:
+        output = io.BytesIO()
+        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+            for i, s in enumerate(st.session_state.sheets_data):
+                sheet_name = f"Sheet_{s['meta']['sheet']}"[:31]
+                pd.DataFrame(s['rows']).to_excel(writer, sheet_name=sheet_name, index=False)
+        st.download_button(label="📥 Download All Tables as Excel", data=output.getvalue(), file_name="Parsed_Terminal_Data.xlsx", mime="application/vnd.ms-excel")
+    except Exception:
+        pass
 
     st.divider()
 
