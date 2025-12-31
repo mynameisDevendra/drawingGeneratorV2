@@ -13,47 +13,63 @@ FIXED_GAP = 33
 PAGE_SIZE = landscape(A3)
 ROW_HEIGHT_SPACING = 105 
 
-def parse_fixed_format_multi_function(text):
-    """Refined Parser: Distinguishes between Terminal Details and Cable Details."""
-    new_rows = []
-    # Check if the line defines the starting sheet number
-    if text.upper().startswith("SHEET:"):
-        try:
-            val = re.search(r'\d+', text)
-            if val:
-                return "SHEET_SET", int(val.group())
-        except: pass
-        return None
+def parse_txt_file(raw_text):
+    """Parses tags and terminal data from the text file."""
+    data_rows = []
+    metadata = {
+        "sheet": 1,
+        "station": "STATION NAME",
+        "goomty": "G-05",
+        "lb": "CTR-01",
+        "sip": "SIP/2025"
+    }
 
-    try:
-        parts = [p.strip() for p in text.split(',')]
-        if len(parts) < 2: return None
-        rid = parts[0].upper()
-        term_keywords = ["SPARE", "RESERVED", "NI", "E3", "TERMINAL", "BLOCK", "LINK", "RESERVE"]
-        last_part = parts[-1].upper()
-        is_cable = not any(key in last_part for key in term_keywords)
+    for line in raw_text.splitlines():
+        line = line.strip()
+        if not line: continue
         
-        if is_cable and len(parts) >= 3:
-            cable_detail = last_part
-            middle_part = ",".join(parts[1:-1])
+        # Check for Metadata Tags
+        upper_line = line.upper()
+        if upper_line.startswith("SHEET:"):
+            val = re.search(r'\d+', line)
+            if val: metadata["sheet"] = int(val.group())
+        elif upper_line.startswith("STATION:"):
+            metadata["station"] = line.split(":", 1)[1].strip()
+        elif upper_line.startswith("GOOMTY:"):
+            metadata["goomty"] = line.split(":", 1)[1].strip()
+        elif upper_line.startswith("LB:"):
+            metadata["lb"] = line.split(":", 1)[1].strip()
+        elif upper_line.startswith("SIP:"):
+            metadata["sip"] = line.split(":", 1)[1].strip()
+        
+        # Parse Terminal Data (Comma separated)
         else:
-            cable_detail = "" 
-            middle_part = ",".join(parts[1:])
-            
-        pattern = r'([^,\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]'
-        matches = re.findall(pattern, middle_part, re.I)
-        
-        for match in matches:
-            func_text = match[0].strip().upper()
-            start, end = int(match[1]), int(match[2])
-            for i in range(start, end + 1):
-                new_rows.append({
-                    "Row ID": rid, "Function": func_text, 
-                    "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)
-                })
-        return "DATA", new_rows
-    except Exception:
-        return None
+            parts = [p.strip() for p in line.split(',')]
+            if len(parts) >= 2:
+                rid = parts[0].upper()
+                term_keywords = ["SPARE", "RESERVED", "NI", "E3", "TERMINAL", "BLOCK", "LINK", "RESERVE"]
+                last_part = parts[-1].upper()
+                is_cable = not any(key in last_part for key in term_keywords)
+                
+                if is_cable and len(parts) >= 3:
+                    cable_detail = last_part
+                    middle_part = ",".join(parts[1:-1])
+                else:
+                    cable_detail = "" 
+                    middle_part = ",".join(parts[1:])
+                    
+                pattern = r'([^,\[]+)\[\s*(\d+)\s+to\s+(\d+)\s*\]'
+                matches = re.findall(pattern, middle_part, re.I)
+                
+                for match in matches:
+                    func_text = match[0].strip().upper()
+                    start, end = int(match[1]), int(match[2])
+                    for i in range(start, end + 1):
+                        data_rows.append({
+                            "Row ID": rid, "Function": func_text, 
+                            "Cable Detail": cable_detail, "Terminal Number": str(i).zfill(2)
+                        })
+    return metadata, data_rows
 
 def draw_page_template(c, width, height, footer_values, sheet_num, page_heading):
     c.setLineWidth(1.5)
@@ -147,61 +163,44 @@ def process_drawing(df, fs, footer_values, page_heading, start_sheet_no):
     return buffer, (current_sheet_val - start_sheet_no + 1), current_sheet_val
 
 # --- STREAMLIT UI ---
-st.set_page_config(page_title="CTR Generator", layout="wide")
+st.set_page_config(page_title="CTR Generator Pro", layout="wide")
 st.title("🚉 CTR Particular Generator")
 
-if 'start_sheet' not in st.session_state:
-    st.session_state.start_sheet = 1
+# Initialize State
+if 'metadata' not in st.session_state:
+    st.session_state.metadata = {"sheet": 1, "station": "STATION", "goomty": "G-05", "lb": "LB-01", "sip": "SIP/2025"}
 
 with st.sidebar:
-    # --- UPDATED INSTRUCTION SECTION ---
-    with st.expander("📘 USER MANUAL & TXT FORMAT", expanded=True):
-        st.markdown("### 1. Set Sheet Number")
-        st.info("To define the starting page, add this at the top of your file:")
-        st.code("SHEET: 05", language="text")
+    with st.expander("📘 TXT FILE FORMAT GUIDE", expanded=True):
+        st.markdown("### 1. Define Footer Info")
+        st.info("Add these tags at the top of your text file:")
+        st.code("STATION: NEW DELHI\nGOOMTY: G-10\nLB: CTR-05\nSIP: SIP/2024/01\nSHEET: 05", language="text")
         
-        st.markdown("### 2. Add Terminal Data")
-        st.info("Follow this comma-separated structure:")
+        st.markdown("### 2. Define Terminals")
         st.code("RowID, Function [Start to End], CableDetail", language="text")
         
-        st.markdown("### 3. Example File")
-        st.code("SHEET: 12\nA, SPARE [01 to 10], 12C MAIN\nB, HR [01 to 05], 24C MAIN", language="text")
+        st.markdown("### Example File Content")
+        st.code("STATION: HOWRAH\nGOOMTY: G-01\nLB: CTR-01\nSHEET: 01\nA, SPARE [01 to 10], 12C MAIN", language="text")
         
     st.divider()
-    st.header("⚙️ Page Setting")
     page_heading = st.text_input("Page Heading", "TERMINAL CHART / CTR PARTICULARS")
     
-    with st.expander("📂 Footer Details", expanded=False):
-        prep_by = st.text_input("Prepared By", "NOVALINE")
-        chk_by1 = st.text_input("Checked By 1", "SSE/SIG")
-        chk_by2 = st.text_input("Checked By 2", "ASTE/SIG")
-        app_by = st.text_input("Approved By", "DY.CSTE")
-        lb_no = st.text_input("LB/CTR/RR No", "CTR-01")
-        goomty_no = st.text_input("Goomty No", "G-05")
-        station = st.text_input("Station", "STATION NAME")
-        sip_no = st.text_input("SIP No", "SIP/2025")
-        
-        f_vals = [prep_by, chk_by1, chk_by2, app_by, lb_no, goomty_no, station, sip_no, "AUTO"]
-    
-    fs = {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}
+    # Static footer names that don't come from TXT
+    prep_by = st.text_input("Prepared By", "NOVALINE")
+    chk_by1 = st.text_input("Checked By 1", "SSE/SIG")
+    chk_by2 = st.text_input("Checked By 2", "ASTE/SIG")
+    app_by = st.text_input("Approved By", "DY.CSTE")
 
 uploaded_file = st.file_uploader("Upload .txt file", type=["txt"])
 
 if uploaded_file:
     raw_text = uploaded_file.getvalue().decode("utf-8")
-    all_parsed = []
-    for line in raw_text.splitlines():
-        if line.strip():
-            result = parse_fixed_format_multi_function(line.strip())
-            if result:
-                rtype, data = result
-                if rtype == "SHEET_SET":
-                    st.session_state.start_sheet = data
-                elif rtype == "DATA":
-                    all_parsed.extend(data)
-    if all_parsed:
-        st.session_state.df = pd.DataFrame(all_parsed).reset_index(drop=True)
-        st.success(f"✅ Data Loaded. Starting from Sheet {st.session_state.start_sheet}")
+    meta, rows = parse_txt_file(raw_text)
+    
+    if rows:
+        st.session_state.metadata = meta
+        st.session_state.df = pd.DataFrame(rows).reset_index(drop=True)
+        st.success(f"✅ Loaded: {meta['station']} | Goomty: {meta['goomty']} | Sheet: {meta['sheet']}")
 
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "30C RR TO GOOMTY-01", "Terminal Number": "01"}])
@@ -210,17 +209,22 @@ st.session_state.df = st.data_editor(st.session_state.df, num_rows="dynamic", us
 
 if st.button("🚀 Generate PDF Drawing"):
     if not st.session_state.df.empty:
+        m = st.session_state.metadata
+        # Assemble footer values from parsed metadata and sidebar inputs
+        f_vals = [prep_by, chk_by1, chk_by2, app_by, m['lb'], m['goomty'], m['station'], m['sip'], "AUTO"]
+        
         pdf_buffer, total_pages, last_sheet = process_drawing(
-            st.session_state.df, fs, f_vals, page_heading, st.session_state.start_sheet
+            st.session_state.df, 
+            {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}, 
+            f_vals, 
+            page_heading, 
+            m['sheet']
         )
         
         current_date = datetime.now().strftime("%d-%m-%Y")
-        clean_rr = goomty_no.replace("/", "-")
-        clean_lb = lb_no.replace("/", "-")
-        clean_stn = station.replace("/", "-")
-        
-        sheet_label = f"{st.session_state.start_sheet:02}" if total_pages == 1 else f"{st.session_state.start_sheet:02}-to-{last_sheet:02}"
-        dynamic_name = f"{clean_rr}_{clean_lb}_{clean_stn}_SHEET-{sheet_label}_{current_date}.pdf"
+        clean_stn = m['station'].replace("/", "-")
+        sheet_label = f"{m['sheet']:02}" if total_pages == 1 else f"{m['sheet']:02}-to-{last_sheet:02}"
+        dynamic_name = f"{m['goomty']}_{m['lb']}_{clean_stn}_SHEET-{sheet_label}_{current_date}.pdf"
         
         st.download_button(
             label="⬇️ Download PDF Drawing",
