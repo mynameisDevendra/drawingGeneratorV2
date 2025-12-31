@@ -30,7 +30,6 @@ def parse_txt_file(raw_text):
         if not line: continue
         
         upper_line = line.upper()
-        # Metadata Tag Parsing
         if upper_line.startswith("SHEET:"):
             val = re.search(r'\d+', line)
             if val: metadata["sheet"] = int(val.group())
@@ -45,7 +44,6 @@ def parse_txt_file(raw_text):
         elif upper_line.startswith("HEADING:"):
             metadata["heading"] = line.split(":", 1)[1].strip()
         else:
-            # Parse Terminal Data
             parts = [p.strip() for p in line.split(',')]
             if len(parts) >= 2:
                 rid = parts[0].upper()
@@ -175,8 +173,8 @@ if 'metadata' not in st.session_state:
 with st.sidebar:
     st.header("🛠️ Control Panel")
     
-    # --- COLLAPSIBLE INSTRUCTIONS ---
-    with st.expander("📖 DOCUMENTATION & TXT FORMAT", expanded=True):
+    # --- COLLAPSIBLE INSTRUCTIONS (Default Collapsed) ---
+    with st.expander("📖 DOCUMENTATION & TXT FORMAT", expanded=False):
         st.markdown("### **Header Metadata Tags**")
         st.info("Include these tags to auto-configure your drawing.")
         st.code("""HEADING: MAIN PAGE TITLE
@@ -196,10 +194,10 @@ SIP: SIP/2025/01
 SHEET: 01
 
 A, SPARE [01 to 10], 12C MAIN CABLE""", language="text")
-        st.success("The 'HEADING' tag controls the large title at the top of each page.")
+        st.success("The 'HEADING' tag controls the title at the top of each page.")
 
-    # --- COLLAPSIBLE PAGE SETTINGS ---
-    with st.expander("🎨 PERSONNEL SETTINGS", expanded=True):
+    # --- COLLAPSIBLE SIGNATURE SETTINGS (Default Collapsed) ---
+    with st.expander("✒️ OFFICIAL NAMES FOR SIGNATURES", expanded=False):
         st.caption("Footer Signing Authority")
         prep_by = st.text_input("Prepared By", "NOVALINE")
         chk_by1 = st.text_input("Checked By (SSE)", "SSE/SIG")
