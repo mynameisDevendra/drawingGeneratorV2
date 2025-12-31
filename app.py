@@ -21,7 +21,8 @@ def parse_txt_file(raw_text):
         "station": "STATION NAME",
         "goomty": "G-05",
         "lb": "CTR-01",
-        "sip": "SIP/2025"
+        "sip": "SIP/2025",
+        "heading": "TERMINAL CHART / CTR PARTICULARS"
     }
 
     for line in raw_text.splitlines():
@@ -29,6 +30,7 @@ def parse_txt_file(raw_text):
         if not line: continue
         
         upper_line = line.upper()
+        # Metadata Tag Parsing
         if upper_line.startswith("SHEET:"):
             val = re.search(r'\d+', line)
             if val: metadata["sheet"] = int(val.group())
@@ -40,7 +42,10 @@ def parse_txt_file(raw_text):
             metadata["lb"] = line.split(":", 1)[1].strip()
         elif upper_line.startswith("SIP:"):
             metadata["sip"] = line.split(":", 1)[1].strip()
+        elif upper_line.startswith("HEADING:"):
+            metadata["heading"] = line.split(":", 1)[1].strip()
         else:
+            # Parse Terminal Data
             parts = [p.strip() for p in line.split(',')]
             if len(parts) >= 2:
                 rid = parts[0].upper()
@@ -165,33 +170,37 @@ st.title("🚉 CTR Particular Generator")
 
 # Initialize State
 if 'metadata' not in st.session_state:
-    st.session_state.metadata = {"sheet": 1, "station": "STATION", "goomty": "G-05", "lb": "LB-01", "sip": "SIP/2025"}
+    st.session_state.metadata = {"sheet": 1, "station": "STATION", "goomty": "G-05", "lb": "LB-01", "sip": "SIP/2025", "heading": "TERMINAL CHART / CTR PARTICULARS"}
 
 with st.sidebar:
     st.header("🛠️ Control Panel")
     
     # --- COLLAPSIBLE INSTRUCTIONS ---
-    with st.expander("📖 DOCUMENTATION & TXT FORMAT", expanded=False):
-        st.markdown("### **Header Metadata**")
-        st.caption("Include these tags at the top of your text file to auto-fill the drawing footer.")
-        st.code("""STATION: STATION NAME
+    with st.expander("📖 DOCUMENTATION & TXT FORMAT", expanded=True):
+        st.markdown("### **Header Metadata Tags**")
+        st.info("Include these tags to auto-configure your drawing.")
+        st.code("""HEADING: MAIN PAGE TITLE
+STATION: STATION NAME
 GOOMTY: G-NUMBER
 LB: LOCATION BOX NO
 SIP: SIP NUMBER
 SHEET: START PAGE NO""", language="text")
         
         st.markdown("---")
-        st.markdown("### **Terminal Data**")
-        st.caption("Standard CSV format for the terminal layout.")
-        st.code("RowID, Function [Start to End], CableDetail", language="text")
-        
-        st.success("Tip: Tags are case-insensitive and can be in any order.")
+        st.markdown("### **Required Example Format**")
+        st.code("""HEADING: TERMINAL CHART FOR JUNCTION BOX 01
+STATION: HOWRAH
+GOOMTY: G-05
+LB: CTR-01
+SIP: SIP/2025/01
+SHEET: 01
+
+A, SPARE [01 to 10], 12C MAIN CABLE""", language="text")
+        st.success("The 'HEADING' tag controls the large title at the top of each page.")
 
     # --- COLLAPSIBLE PAGE SETTINGS ---
-    with st.expander("🎨 PAGE & FOOTER SETTINGS", expanded=True):
-        page_heading = st.text_input("Main Page Heading", "TERMINAL CHART / CTR PARTICULARS")
-        st.divider()
-        st.caption("Personnel Details")
+    with st.expander("🎨 PERSONNEL SETTINGS", expanded=True):
+        st.caption("Footer Signing Authority")
         prep_by = st.text_input("Prepared By", "NOVALINE")
         chk_by1 = st.text_input("Checked By (SSE)", "SSE/SIG")
         chk_by2 = st.text_input("Checked By (ASTE)", "ASTE/SIG")
@@ -207,11 +216,12 @@ if uploaded_file:
     if rows:
         st.session_state.metadata = meta
         st.session_state.df = pd.DataFrame(rows).reset_index(drop=True)
-        # Professional summary of imported data
+        # Visual Summary
         col1, col2, col3 = st.columns(3)
         col1.metric("Station", meta['station'])
         col2.metric("Goomty/LB", f"{meta['goomty']} / {meta['lb']}")
         col3.metric("Start Sheet", f"{meta['sheet']:02}")
+        st.info(f"📑 **Active Heading:** {meta['heading']}")
 
 if 'df' not in st.session_state:
     st.session_state.df = pd.DataFrame([{"Row ID": "A", "Function": "SPARE", "Cable Detail": "SAMPLE CABLE", "Terminal Number": "01"}])
@@ -228,7 +238,7 @@ if st.button("🚀 Generate PDF Drawing", type="primary"):
             st.session_state.df, 
             {'head': 8.0, 'foot': 7.0, 'term': 7.0, 'row': 12.0}, 
             f_vals, 
-            page_heading, 
+            m['heading'],
             m['sheet']
         )
         
@@ -239,7 +249,7 @@ if st.button("🚀 Generate PDF Drawing", type="primary"):
         
         st.divider()
         st.download_button(
-            label="📥 Download Finished PDF",
+            label="📥 Download Finished PDF Drawing",
             data=pdf_buffer,
             file_name=filename,
             mime="application/pdf",
